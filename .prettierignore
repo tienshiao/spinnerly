@@ -1,0 +1,14 @@
+# Generated
+.next/
+out/
+build/
+next-env.d.ts
+package-lock.json
+
+# Managed by the Backlog.md CLI — never hand-edit, never reformat.
+backlog/
+
+# Claude Design handoff bundle. These are prototypes exported from another
+# tool, not our source; reformatting them would destroy the diff against any
+# future re-export.
+docs/spin-the-wheel-editor/
