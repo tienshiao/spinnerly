@@ -41,7 +41,13 @@ if (!PROJECT_ID.startsWith('demo-')) {
   process.exit(1)
 }
 
-const SHARE_ID = 'seedwheel000000000000'
+// Exactly 20 characters of [A-Za-z0-9], because that is the shape of a
+// Firestore auto-ID and `isShareId` in lib/wheels/store.ts rejects anything
+// else before it will look a wheel up. That check is a path-traversal guard —
+// Firestore resolves slashes in a document ID as path separators — so it is
+// strict on purpose and the fixture is what has to conform. A 21-character ID
+// here reads fine and then 404s on every write route.
+const SHARE_ID = 'seedwheel00000000000'
 const EDIT_TOKEN = 'seed-edit-token'
 const BASE_URL = process.env.SEED_BASE_URL ?? 'http://localhost:3000'
 
@@ -103,6 +109,12 @@ await Promise.all(
 await db.doc(`wheelSecrets/${SHARE_ID}`).set({
   editTokenHash: createHash('sha256').update(EDIT_TOKEN).digest('hex'),
   createdAt: now,
+  // Mirrors the wheel's expiry, exactly as `createWheel` does. Without it the
+  // secret outlives the wheel the TTL policy reaps, leaving `assertEditor`
+  // succeeding for a wheel that no longer exists. Keeping the fixture identical
+  // to production matters most for TASK-14, which is the task that will be
+  // validated against this data and would otherwise never see the asymmetry.
+  expiresAt,
 })
 
 console.log(`Seeded ${PROJECT_ID} at ${process.env.FIRESTORE_EMULATOR_HOST}\n`)
