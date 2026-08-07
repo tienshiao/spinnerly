@@ -4,7 +4,7 @@ title: Implement Open Graph metadata and generated preview images
 status: To Do
 assignee: []
 created_date: '2026-08-07 08:39'
-updated_date: '2026-08-07 08:54'
+updated_date: '2026-08-07 09:31'
 labels: []
 dependencies:
   - TASK-2
@@ -51,5 +51,15 @@ Prototype references: OG Image.dc.html is the marketing card (1200x630, headline
 created: 2026-08-07 08:54
 ---
 Decision 17: duplicate copies the title verbatim, so two forks of one wheel produce identical OG unfurls. This is consistent with the staleness-robust design already required here rather than a new problem, but it does mean the unfurl cannot be relied on to distinguish two wheels. Do not add fork markers or disambiguating text to the image to compensate.
+---
+
+author: @claude
+created: 2026-08-07 09:31
+---
+From TASK-3: the fonts load via next/font/google, so Caprasimo and Figtree are self-hosted as woff2 under .next/static/media with content-hashed filenames. This route cannot reuse those files. Satori (which next/og wraps) does not parse woff2 at all — it needs ttf, otf or woff — and the hashed paths are not stable to read from a route handler anyway.
+
+So TASK-23 needs its own font source: commit a ttf of each face (both are OFL-1.1, so redistribution is fine) and read them with fs.readFile at module scope, or fetch and cache them at build time. A subset ttf is worth it here since the OG image only ever renders a title and a count.
+
+Flagging because TASK-3's description assumed the OG route could share the same font files, and it cannot.
 ---
 <!-- COMMENTS:END -->

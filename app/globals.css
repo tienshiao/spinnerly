@@ -1,1 +1,91 @@
 @import 'tailwindcss';
+@import './theme.css';
+
+/* Organic's base layer. Tailwind's preflight already handles the resets this
+ * system's styles.css does by hand (box-sizing, margin zeroing, block images),
+ * so what remains is only what makes the page look like Organic: the ground,
+ * the type ramp preflight strips off headings, and the themed interaction
+ * states.
+ *
+ * Component styling does not belong here — see TASK-4. */
+@layer base {
+  body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1.55;
+  }
+
+  /* Preflight unsets heading size and weight, so the display face and the
+     scale have to be reasserted. Doing it here is what lets components stay
+     free of font declarations. */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    letter-spacing: -0.015em;
+    line-height: 1.12;
+    margin-block-end: var(--spacing-2);
+  }
+
+  h1 {
+    font-size: var(--text-h1);
+  }
+  h2 {
+    font-size: var(--text-h2);
+  }
+  h3 {
+    font-size: var(--text-h3);
+  }
+  h4 {
+    font-size: var(--text-h4);
+  }
+  h5 {
+    font-size: var(--text-h5);
+  }
+  h6 {
+    font-size: var(--text-h6);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  p {
+    margin-block-end: var(--spacing-3);
+  }
+
+  /* accent-700, not accent. Organic's own stylesheet uses the base accent, but
+     every prototype page overrides it to the deep step and the readme says to:
+     the accent-to-ground pair is tuned to 3:1, which carries icons and large
+     text but not body copy. #f2545b on this ground is 3.15:1 and fails WCAG AA
+     for inline links; #b02730 is 6.14:1. Hover brightens to the base accent,
+     which is where the 3:1 pair is legitimate. */
+  a {
+    color: var(--color-accent-700);
+    text-underline-offset: 3px;
+  }
+
+  a:hover {
+    color: var(--color-accent);
+  }
+
+  /* Themed interaction states, never the browser defaults. Mouse users get no
+     ring; keyboard users always do. */
+  :focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  }
+}

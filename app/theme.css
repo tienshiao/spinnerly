@@ -1,0 +1,134 @@
+/* Spinnerly theme tokens.
+ *
+ * Ported from the Organic design system shipped with the Claude Design bundle
+ * (docs/spin-the-wheel-editor/project/_ds/organic-<id>/styles.css). Organic's own
+ * palette is a warm sand-and-clay set; every prototype page then overrides the
+ * :root colours with the Spinnerly variant, so the values below are the
+ * override, not the Organic defaults. Structure — the shared lightness scale,
+ * the space/radius/shadow scales — is Organic's.
+ *
+ * The wheel slice colours are deliberately NOT here; they are a data palette
+ * indexed by option position, not a theme role. See ./wheel-palette.ts.
+ */
+
+/* `static` because Tailwind otherwise emits only the tokens it sees used in a
+ * utility class, and components are expected to reach for these through plain
+ * `var()` too — which Tailwind cannot detect, and which would then resolve to
+ * nothing. This token set is hand-curated and small, so emitting all of it
+ * costs a few hundred bytes. */
+@theme static {
+  /* — ground — */
+  --color-bg: #f7f6fb;
+  --color-surface: #ffffff;
+  --color-text: #26252c;
+  --color-accent: #f2545b;
+  --color-accent-2: #3fa7d6;
+  --color-divider: color-mix(in srgb, #26252c 14%, transparent);
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the
+     same step of any role matches the others in visual value.
+
+     The `initial` reset clears Tailwind's own neutral scale first. Defining
+     100-900 on top of it would otherwise leave Tailwind's chroma-0 grey at the
+     50 and 950 steps, so `bg-neutral-50` would silently drop out of this
+     palette at the one step where the drift is most visible. Organic defines
+     100-900, so 100-900 is all that should exist. */
+  --color-neutral-*: initial;
+  --color-neutral-100: #ffffff;
+  --color-neutral-200: #f1f0f6;
+  --color-neutral-300: #e2e0ea;
+  --color-neutral-400: #c6c3d2;
+  --color-neutral-500: #a4a1b2;
+  --color-neutral-600: #7d7a8c;
+  --color-neutral-700: #5c5a68;
+  --color-neutral-800: #3d3b46;
+  --color-neutral-900: #26252c;
+
+  --color-accent-100: #fff0f0;
+  --color-accent-200: #ffdcdd;
+  --color-accent-300: #ffbcbe;
+  --color-accent-400: #fb8f93;
+  --color-accent-500: #f2545b;
+  --color-accent-600: #d93b45;
+  --color-accent-700: #b02730;
+  --color-accent-800: #7d1a21;
+  --color-accent-900: #4f1015;
+
+  --color-accent-2-100: #eaf6fd;
+  --color-accent-2-200: #cfeaf9;
+  --color-accent-2-300: #a8d9f3;
+  --color-accent-2-400: #6dbfe8;
+  --color-accent-2-500: #3fa7d6;
+  --color-accent-2-600: #2b87b4;
+  --color-accent-2-700: #1d6890;
+  --color-accent-2-800: #144964;
+  --color-accent-2-900: #0d2e40;
+
+  /* — type —
+     The --font-*-src variables are set by next/font on the <html> element in
+     the root layout. The fallback goes *inside* the var() rather than after
+     it: a bare var() naming an undefined property poisons the whole
+     declaration, and since font-family inherits, the trailing `system-ui,
+     sans-serif` would never be reached — the element would silently inherit
+     its parent's face instead. That matters for any tree that does not carry
+     these classes, such as an OG image route reusing this file. */
+  --font-heading: var(--font-heading-src, system-ui), system-ui, sans-serif;
+  --font-heading-weight: 400;
+  --font-body: var(--font-body-src, system-ui), system-ui, sans-serif;
+
+  /* Organic's heading scale. Body copy is 15px/1.55. */
+  --text-h1: 42px;
+  --text-h2: 32px;
+  --text-h3: 25px;
+  --text-h4: 20px;
+  --text-h5: 16px;
+  --text-h6: 13px;
+
+  /* — space —
+     Organic's scale is a 1.1x-scaled 4/8/12/16/24/32 grid, hence the .4s and
+     .8s. Keep the fractions; rounding them drifts against the prototype. */
+  --spacing-1: 4.4px;
+  --spacing-2: 8.8px;
+  --spacing-3: 13.2px;
+  --spacing-4: 17.6px;
+  --spacing-6: 26.4px;
+  --spacing-8: 35.2px;
+
+  /* — radius —
+     Reset first. Organic is a three-step scale, and layering it over
+     Tailwind's eight-step one leaves the scale non-monotonic: Tailwind's
+     surviving `--radius-xl` is 12px, so `rounded-xl` would render a *smaller*
+     corner than `rounded-md` at 16px, and `rounded-2xl` would be identical to
+     it. A component asking for a rounder corner would quietly get a squarer
+     one. Better that `rounded-xl` not exist than that it lie.
+
+     The rounded-frame override in Organic's styles.css pushes containers to
+     radius-lg * 1.15 and small controls to a full pill; both are named here so
+     components can reference them instead of recomputing. */
+  --radius-*: initial;
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 28px;
+  --radius-container: calc(var(--radius-lg) * 1.15);
+  --radius-pill: 999px;
+
+  /* — elevation —
+     Reset for the same reason as radius, and one more: Organic's shadows are
+     ink-tinted, Tailwind's are pure black. Leaving the unreferenced steps in
+     place would put a black `shadow-xs` next to a tinted `shadow-sm` — exactly
+     the warm/cool mismatch this file exists to avoid.
+
+     Tinted from --color-neutral-900 rather than a literal, so retuning the
+     ramp carries through. Organic hardcodes its own #2e2b25 here and the
+     prototype pages override the palette but never the shadows, so the
+     prototype in fact renders warm-brown shadows on this cool ground; Organic
+     documents elevation as derived from the ground, so the derivation is
+     reapplied rather than the stale literal copied. */
+  --shadow-*: initial;
+  --shadow-sm: 0 1px 2px
+    color-mix(in srgb, var(--color-neutral-900) 14%, transparent);
+  --shadow-md: 0 3px 10px
+    color-mix(in srgb, var(--color-neutral-900) 16%, transparent);
+  --shadow-lg: 0 12px 32px
+    color-mix(in srgb, var(--color-neutral-900) 22%, transparent);
+}

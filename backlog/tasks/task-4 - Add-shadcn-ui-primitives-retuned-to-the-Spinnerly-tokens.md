@@ -4,7 +4,7 @@ title: Add shadcn/ui primitives retuned to the Spinnerly tokens
 status: To Do
 assignee: []
 created_date: '2026-08-07 08:35'
-updated_date: '2026-08-07 09:07'
+updated_date: '2026-08-07 09:44'
 labels: []
 dependencies:
   - TASK-2
@@ -34,8 +34,6 @@ Button variants must land on the prototype look: primary is a solid accent fill 
 - [ ] #6 shadcn is initialised on Base UI (the current default), and no Radix-era asChild usage remains
 <!-- AC:END -->
 
-
-
 ## Comments
 
 <!-- COMMENTS:BEGIN -->
@@ -48,5 +46,15 @@ Reasoning: Base UI is from the same people who built Radix, so the accessibility
 The one API difference that will bite: Radix `asChild` is Base UI `render`. This matters for button, and for any Radix-era snippet copied off the web or out of an older tutorial. Component pages on ui.shadcn.com now open on the Base UI tab with Radix as the secondary tab, so make sure any reference being followed is on the right tab.
 
 Base UI also ships primitives Radix never had (Combobox, Autocomplete, Number Field, Checkbox Group). None are needed for v1, but Combobox is the obvious candidate if the option list ever wants typeahead.
+---
+
+author: @claude
+created: 2026-08-07 09:44
+---
+From TASK-3's review: the radius, elevation and neutral namespaces are now reset with '*: initial' before being redefined, so Tailwind's default steps outside Organic's scale no longer exist. Missing on purpose: rounded-xs/xl/2xl/3xl/4xl, shadow-2xs/xs/xl/2xl, neutral-50/950.
+
+This matters here because shadcn primitives reach for exactly those — shadow-xs is its default for buttons and inputs, and rounded-xl is common in newer blocks. Pasted unchanged they will produce no border-radius or no shadow at all rather than a wrong-looking one. Map them onto Organic's three steps as part of the retune.
+
+The reset is deliberate: before it, --radius-xl survived at 12px, so rounded-xl rendered a smaller corner than rounded-md at 16px. A silently-absent utility is recoverable; a silently-inverted scale is not.
 ---
 <!-- COMMENTS:END -->
