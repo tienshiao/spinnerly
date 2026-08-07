@@ -32,6 +32,16 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# Opted in: neither holds a secret. .env.development is the emulator config,
+# which is local-only by construction; .env.example documents the full set.
+!.env.example
+!.env.development
+
+# firebase emulator
+/firebase-debug.log
+/firestore-debug.log
+/ui-debug.log
+/.firebase
 
 # vercel
 .vercel

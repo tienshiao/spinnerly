@@ -1,10 +1,11 @@
 ---
 id: TASK-5
 title: Wire the Firebase SDKs against the local emulator
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-07 08:36'
-updated_date: '2026-08-07 18:12'
+updated_date: '2026-08-07 19:03'
 labels: []
 dependencies:
   - TASK-2
@@ -102,17 +103,84 @@ Credentials are handled once, in TASK-27 and TASK-25, and go from the Firebase c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 firebase-admin initialises from environment variables and is reused across invocations within a warm lambda
-- [ ] #2 The client SDK config is public-safe and contains no service account material
-- [ ] #3 The service account private key is absent from the repository and from any committed env file
-- [ ] #4 A documented .env.example lists every required variable
-- [ ] #5 Local development can point at a separate Firebase project from production via one environment variable
-- [ ] #6 The private key survives both storage forms — escaped backslash-n in a local env file and real newlines pasted into Vercel — without a code change
-- [ ] #7 The client SDK module exports no write capability, and importing a Firestore write function from client code fails lint
-- [ ] #8 Local development runs entirely against the Firebase Emulator Suite with no cloud project and no service account present on the machine
-- [ ] #9 The local Firestore project id uses the demo- prefix, so a misconfiguration cannot reach a real project
-- [ ] #10 firebase-tools is a pinned devDependency, not a global install
+- [x] #1 firebase-admin initialises from environment variables and is reused across invocations within a warm lambda
+- [x] #2 The client SDK config is public-safe and contains no service account material
+- [x] #3 The service account private key is absent from the repository and from any committed env file
+- [x] #4 A documented .env.example lists every required variable
+- [x] #5 Local development can point at a separate Firebase project from production via one environment variable
+- [x] #6 The private key survives both storage forms — escaped backslash-n in a local env file and real newlines pasted into Vercel — without a code change
+- [x] #7 The client SDK module exports no write capability, and importing a Firestore write function from client code fails lint
+- [x] #8 Local development runs entirely against the Firebase Emulator Suite with no cloud project and no service account present on the machine
+- [x] #9 The local Firestore project id uses the demo- prefix, so a misconfiguration cannot reach a real project
+- [x] #10 firebase-tools is a pinned devDependency, not a global install
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add deps: firebase-admin + firebase (runtime), firebase-tools pinned exact (dev).
+2. firebase.json (Firestore emulator 127.0.0.1:8080, UI 4000, singleProjectMode) and .firebaserc pointing at demo-spinnerly. No firestore.rules key yet — TASK-6 adds it.
+3. Env: commit .env.development with the four secret-free emulator values so npm run dev needs zero setup, plus a documented .env.example covering both local and deployed sets. Unignore both in .gitignore.
+4. npm scripts: 'emulator' (emulators:start), 'dev:emulator' (emulators:exec wrapping seed + next dev), 'seed'.
+5. scripts/seed-emulator.mjs — refuses to run without FIRESTORE_EMULATOR_HOST, writes one demo wheel + suggestions + wheelSecrets hash, prints the share and edit URLs.
+6. lib/firebase/admin.ts — lazy singleton cached on globalThis, emulator branch skips credentials, private key normalised for both escaped-\\n and real-newline storage.
+7. lib/firebase/client.ts — client-only, lazy, connectFirestoreEmulator before any other Firestore call, exports a read handle and no write helper.
+8. eslint rule spinnerly/no-client-firestore-writes in eslint-rules/index.mjs + tests: named, aliased, namespace member, namespace destructure, dynamic import() and require() forms.
+9. README local-development section; run typecheck, lint, test, format:check, and a real emulator round trip.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented and verified against a live emulator.
+
+Files: firebase.json, .firebaserc, .env.development, .env.example, lib/firebase/admin.ts, lib/firebase/client.ts, scripts/seed-emulator.mjs, eslint-rules/index.mjs (+ tests), eslint.config.mjs, package.json, .gitignore, README.md.
+
+## Verification
+
+- Emulator round trip: 'firebase emulators:exec' + seed writes wheel, suggestions and wheelSecrets.
+- Admin module under --conditions=react-server: initialises with no credential, writes and reads back.
+- Client module in a browser-shaped graph: reads the seeded wheel and a suggestion subcollection doc, and onSnapshot delivered a live Admin SDK write. That is the whole reason this app is on Firestore, so it was worth proving rather than assuming.
+- Guards proven to fire, not just present: admin module imported from a Client Component fails the build ('server-only' cannot be imported from a Client Component module); client module imported from a route handler fails the build ('client-only' cannot be imported from a Server Component module); a real client component calling setDoc/arrayUnion errors under the new lint rule while doc() does not.
+- npm run dev:emulator serves / and /w/{shareId} at 200 with the emulator UI up.
+- lint, typecheck, format:check clean; npm test 38 pass.
+
+## Departures from the plan, and why
+
+firebase-tools pinned to 14.18.0, not latest. 14.19.0 raised the emulator Java floor from 11 to 21 (MIN_SUPPORTED_JAVA_MAJOR_VERSION, a hard throw before any emulator starts). This machine has JDK 17 and 11. The Firebase install-and-configure docs still claim Java 11+, which has been wrong since October 2025. User chose the pin over installing a JDK 21. Documented in the README so the next bump is a deliberate decision with a CI setup-java step, not an incidental one.
+
+Emulator UI moved off Firebase's default port 4000 to 4001 — 4000 was occupied on this machine and the emulator treats the clash as a hard startup failure rather than falling back.
+
+server-only and client-only added as direct dependencies. server-only was not installed at all and client-only was only present transitively via styled-jsx. Worth noting that tsc does not catch this: typecheck passed with server-only missing entirely, and only next build failed. A bare side-effect import is not the safety net it looks like.
+
+Env shape: .env.development is committed rather than expecting a copy of .env.example. Every local value is a secret-free constant, so a fresh clone runs with no setup step at all, which is the point of decision 19. .env.example still documents the full set including the deployed-only variables.
+
+## Bug the verification caught
+
+normalizePrivateKey called raw.trim(), which silently ate the trailing newline of a real-newline-form PEM key — the same class of quiet mangling the function exists to undo, and it would have hit exactly the Vercel-paste path AC #6 is about. Now strips whitespace only from outside surrounding quotes. Both storage forms are asserted.
+
+## Left for other tasks
+
+firebase.json has no firestore.rules key, so the emulator runs open and warns on startup — TASK-6 adds the rules file and the @firebase/rules-unit-testing suite, and will need Java in CI.
+
+## Post-review fixes
+
+Code review found six issues; five were real and are fixed, one I disagreed with and left with the reasoning recorded in the code. All confirmed by reproduction before fixing, and all covered by new tests — the suite went from 38 to 51.
+
+1. npm run seed could never work standalone. Plain 'node scripts/seed-emulator.mjs' loads no env file, so FIRESTORE_EMULATOR_HOST was unset and the safety guard refused to run — while the README advertised the command as 'reseed a running emulator'. It only worked inside dev:emulator, where emulators:exec injects the variable. Now runs with --env-file=.env.development --env-file-if-exists=.env.local. Verified: node's --env-file does not override an already-set shell variable, so the emulators:exec value still wins inside dev:emulator, and later --env-file entries beat earlier ones, matching Next's precedence. That also fixes the knock-on the reviewer spotted: a .env.local project-id override now reaches the seed script, so seed and app can no longer target different projects under singleProjectMode.
+
+2. require-nodejs-runtime went blind exactly where this task gave it something to guard. Its trigger only matched a direct firebase-admin import, so once lib/firebase/admin.ts became the canonical indirection, any route segment importing the wrapper was silently exempt — including app/w/[shareId]/page.tsx and opengraph-image.tsx, the server-reading segments the design doc plans for. The wrapper is now recognised by path suffix, so both the @/ alias and relative spellings count.
+
+3. no-client-firestore-writes was bypassable by re-export. 'export { setDoc } from ...' and 'export * from ...' both reported nothing, which is the worst case rather than a marginal one: a barrel puts a write one import away while guaranteeing nothing downstream ever mentions firebase/firestore again. Both forms now report, export * with its own message since it names no specific write. Also closed: a namespace laundered through a chain of local consts (const g = fs; const h = g), handled with a worklist so it is the chain being followed rather than one hop special-cased, and the internal @firebase/firestore spelling, which resolves and works.
+
+4. The client SDK split the emulator host on the first colon with no validation. connectFirestoreEmulator(db, host, NaN) does not throw — it produces a client that quietly never reaches the emulator, which reads as an empty database. Since .env.local is explicitly invited to override this value, 'localhost' with no port is a plausible typo. Now splits on the last colon and rejects a non-integer or out-of-range port with a message naming the variable. Verified against the emulator: five malformed forms rejected, [::1]:8080 no longer torn in half, real reads unaffected.
+
+5. Disagreed and did not change: the reviewer wanted cache.db set before connectFirestoreEmulator, so a throw would not leave every subsequent call throwing. Caching first would hand the next caller a working-looking client aimed at the wrong Firestore. A loud repeated error is the better failure here, so the behaviour stands, with a comment saying so and the throw wrapped in a message that names the actual cause.
+
+Not fixed by design: the reviewer noted the new rule will block TASK-6's @firebase/rules-unit-testing suite, which must import client writes to assert they fail. True, but a config override matching a directory that does not exist yet is dead config, so it is a comment on TASK-6 instead.
+
+Re-verified after the changes: 51 tests pass, lint, typecheck, format:check and next build clean, npm run seed works standalone against a running emulator, client SDK still reads the seeded fixture.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 
@@ -148,4 +216,32 @@ The two are genuinely independent: this task needs no Firebase account, project 
 
 The lint rule is approved and is now item 10 of the plan rather than a proposal: spinnerly/no-client-firestore-writes, same shape as the existing runtime-invariant rules.
 ---
+
+author: @claude
+created: 2026-08-07 18:42
+---
+firebase-tools is pinned to 14.18.0 rather than 15.x, and it is worth knowing why before someone bumps it.
+
+14.19.0 raised the emulator's Java floor from 11 to 21 — MIN_SUPPORTED_JAVA_MAJOR_VERSION in lib/emulator/commandUtils.js, thrown before any emulator starts. The task description says 'Verified on this machine: Java 17 is present, which the emulator requires', which was true when written; the Firebase install-and-configure docs still say Java 11+ and have been wrong since October 2025.
+
+So the bump is not a version bump, it is an everyone-installs-a-new-JDK bump, plus a setup-java step in CI. TASK-6 is the natural place to do it deliberately, since its rules tests need Java in CI anyway.
+---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Wired both halves of the design doc section 3 split against the Firebase Emulator Suite, with no cloud project and no service account on the machine.
+
+Server: lib/firebase/admin.ts, a lazy Admin SDK singleton cached on globalThis so it survives hot reload and warm lambda reuse. When FIRESTORE_EMULATOR_HOST is set it initialises with no credential at all; otherwise it builds one from the service account variables, normalising the private key so both escaped-backslash-n and Vercel's real newlines work unchanged.
+
+Client: lib/firebase/client.ts, a read-only handle whose connectFirestoreEmulator call happens inside the same lazy init that creates the instance, so no caller can obtain an unconnected one.
+
+The 'client never writes' invariant is enforced three ways rather than asserted once — security rules (TASK-6), the new spinnerly/no-client-firestore-writes lint rule, and the module exporting nothing that writes. The rule handles aliased imports, namespace member access including the computed form, destructuring off a namespace, await import() with no binding, and require().
+
+Local setup is zero-step: .env.development is committed because every emulator value is a secret-free constant, and npm run dev:emulator starts the emulator, seeds a wheel and runs the dev server.
+
+Verified against a live emulator, not just compiled: the client SDK read an Admin SDK write back, onSnapshot delivered a live update, and each guard was proven to fail the build or the lint when violated. That verification caught a real bug — normalizePrivateKey was trimming the trailing newline off a real-newline PEM key, the exact Vercel-paste case AC #6 covers.
+
+Two deliberate deviations: firebase-tools is pinned to 14.18.0 because 14.19.0 raised the emulator's Java floor to 21 and this machine runs JDK 17, and the emulator UI sits on port 4001 because 4000 was taken and the clash is a hard startup failure. Both documented in the README.
+<!-- SECTION:FINAL_SUMMARY:END -->

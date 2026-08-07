@@ -13,6 +13,7 @@ const eslintConfig = defineConfig([
     rules: {
       'spinnerly/no-edge-runtime': 'error',
       'spinnerly/require-nodejs-runtime': 'error',
+      'spinnerly/no-client-firestore-writes': 'error',
     },
   },
 
