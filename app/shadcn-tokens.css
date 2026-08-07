@@ -1,0 +1,89 @@
+/* The shadcn bridge.
+ *
+ * shadcn components address colour through a flat set of semantic names
+ * (--background, --primary, --border, ...). This file is the only place those
+ * names are defined, and every one of them resolves to an Organic token from
+ * theme.css — no hex literal appears here, so the ramp stays the single source
+ * of truth and retuning it carries into every primitive.
+ *
+ * `shadcn init` generates a version of this block itself. It is not used,
+ * because it also does three things this project cannot accept:
+ *
+ *   1. It sets `--color-accent: var(--accent)` in a @theme block that lands
+ *      after theme.css, so Organic's coral accent role silently became
+ *      shadcn's near-white grey — taking the focus ring, link hover and
+ *      selection tint with it. shadcn's `accent` means "menu hover tint";
+ *      Organic's means "the brand colour". Same name, unrelated jobs. None of
+ *      the five installed components use shadcn's, so it is simply not defined
+ *      here and Organic keeps the name.
+ *   2. It redefines the whole --radius-* namespace off its own --radius,
+ *      undoing the reset in theme.css and reintroducing a scale that is not
+ *      Organic's. Radius is handled per-component instead.
+ *   3. It forces `html { font-sans }` with Geist, overriding Figtree.
+ */
+
+/* Tailwind's built-in `dark` variant keys off prefers-color-scheme, so the
+ * `dark:` utilities baked into every shadcn component would activate for
+ * anyone whose OS is set to dark — producing a half-dark input on a light page
+ * in a design that has no dark mode. Rebinding the variant to an explicit
+ * `.dark` ancestor makes them all inert. Delete this and dark mode does not
+ * arrive; a broken half-and-half theme does. */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* — ground and surfaces — */
+  --background: var(--color-bg);
+  --foreground: var(--color-text);
+  --card: var(--color-surface);
+  --card-foreground: var(--color-text);
+  --popover: var(--color-surface);
+  --popover-foreground: var(--color-text);
+
+  /* — roles —
+     Organic's .btn-primary is an accent fill with the page ground as its
+     label, which is where primary-foreground comes from. */
+  --primary: var(--color-accent);
+  --primary-foreground: var(--color-bg);
+  --secondary: var(--color-surface);
+  --secondary-foreground: var(--color-text);
+
+  /* neutral-700, not -600: muted-foreground carries real body copy, and
+     neutral-600 measures 3.88:1 on this ground, under WCAG AA. */
+  --muted: var(--color-neutral-200);
+  --muted-foreground: var(--color-neutral-700);
+
+  /* Organic has no destructive role. The deep accent step reads as an error
+     red, stays inside the ramp, and holds 6.14:1 on the ground — rather than
+     inventing a hex this palette has no answer for. */
+  --destructive: var(--color-accent-700);
+  --destructive-foreground: var(--color-bg);
+
+  /* — lines and focus — */
+  --border: var(--color-divider);
+  --input: var(--color-divider);
+  --ring: var(--color-accent);
+}
+
+/* `inline` so Tailwind substitutes these into utilities directly rather than
+ * emitting a second layer of indirection. Deliberately absent: --color-accent
+ * and --color-accent-foreground (Organic owns that name, see above) and the
+ * --radius-* remapping. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}

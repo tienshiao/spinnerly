@@ -86,13 +86,27 @@
 
   /* — space —
      Organic's scale is a 1.1x-scaled 4/8/12/16/24/32 grid, hence the .4s and
-     .8s. Keep the fractions; rounding them drifts against the prototype. */
-  --spacing-1: 4.4px;
-  --spacing-2: 8.8px;
-  --spacing-3: 13.2px;
-  --spacing-4: 17.6px;
-  --spacing-6: 26.4px;
-  --spacing-8: 35.2px;
+     .8s. Keep the fractions; rounding them drifts against the prototype.
+
+     Named `--space-*`, deliberately NOT `--spacing-*`. Tailwind's `--spacing-N`
+     keys do not merely add tokens — they rebind every numeric utility at that
+     step across padding, margin, gap, inset AND sizing, while the steps Organic
+     does not define stay on the 4px multiplier. That produced a genuinely mixed
+     grid: `size-4` became 17.6px (so every button icon rendered 10% oversized)
+     while `size-9` stayed 36px and `px-2.5` stayed 10px. Same failure mode as
+     the radius and shadow namespaces above, which is why those are reset.
+
+     Resetting `--spacing` is not an option here — it would delete the standard
+     scale that the shadcn primitives are built on. So Organic's steps live
+     outside the namespace and are addressed explicitly, `p-(--space-4)`, which
+     leaves the numeric utilities on one uniform grid and makes every use of the
+     Organic scale visible at the call site. */
+  --space-1: 4.4px;
+  --space-2: 8.8px;
+  --space-3: 13.2px;
+  --space-4: 17.6px;
+  --space-6: 26.4px;
+  --space-8: 35.2px;
 
   /* — radius —
      Reset first. Organic is a three-step scale, and layering it over
