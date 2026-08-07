@@ -4,13 +4,13 @@ import { fileURLToPath } from 'node:url'
 import { configDefaults, defineConfig } from 'vitest/config'
 
 /**
- * Test projects, split by what the tests need rather than by what they cover.
+ * Two projects, split by what the tests need rather than by what they cover.
  *
  * `unit` is the default and takes every test file. It must stay runnable with
  * nothing but `npm install` — no Java, no emulator — because it is what runs on
  * every change. A test that needs a live Firestore opts OUT of it by being
- * named `*.emulator.test.ts`; the project that runs those arrives with the
- * first such test.
+ * named `*.emulator.test.ts`, which `npm run test:emulator` runs under
+ * `firebase emulators:exec`.
  *
  * The direction matters. If `unit` opted in on a `*.unit.test.ts` suffix
  * instead, an ordinary `foo.test.ts` would match neither project and be run by
@@ -86,6 +86,19 @@ export default defineConfig({
           // than listing node_modules by hand, since assigning `exclude`
           // replaces the defaults instead of adding to them.
           exclude: [...configDefaults.exclude, EMULATOR_TESTS],
+        },
+      },
+      {
+        ...shared,
+        test: {
+          name: 'emulator',
+          environment: 'node',
+          include: [EMULATOR_TESTS],
+          // One shared database. Running these files concurrently is safe today
+          // because every test creates its own wheels, but a suite that assumed
+          // an empty collection would start flaking against whichever file
+          // happened to run alongside it.
+          fileParallelism: false,
         },
       },
     ],

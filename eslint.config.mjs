@@ -14,6 +14,7 @@ const eslintConfig = defineConfig([
       'spinnerly/no-edge-runtime': 'error',
       'spinnerly/require-nodejs-runtime': 'error',
       'spinnerly/no-client-firestore-writes': 'error',
+      'spinnerly/no-wheel-secret-queries': 'error',
     },
   },
 

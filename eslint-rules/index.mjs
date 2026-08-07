@@ -476,11 +476,218 @@ const noClientFirestoreWrites = {
   },
 }
 
+/**
+ * The secrets collection, in both spellings that appear in this repo: the raw
+ * string, and the `WHEEL_SECRETS` constant lib/wheels/store.ts exports so the
+ * name lives in one place. Matching the identifier by name is a heuristic — the
+ * rule does not resolve it to its value — but the alternative is that the
+ * project's own preferred spelling is the one bypass the rule cannot see.
+ */
+const WHEEL_SECRETS_NAMES = new Set(['wheelSecrets', 'WHEEL_SECRETS'])
+
+/** The field whose presence in a `where()` is the anti-pattern's signature. */
+const EDIT_TOKEN_HASH = 'editTokenHash'
+
+/**
+ * Anything that turns a collection reference into a search or a bulk read.
+ * `get` and `stream` are here because calling either straight on a collection
+ * reference — with no `.doc()` in between — reads every secret in the database.
+ */
+const COLLECTION_QUERY_METHODS = new Set([
+  'where',
+  'orderBy',
+  'limit',
+  'limitToLast',
+  'offset',
+  'startAt',
+  'startAfter',
+  'endAt',
+  'endBefore',
+  'select',
+  'count',
+  'aggregate',
+  'listDocuments',
+  'get',
+  'stream',
+  'onSnapshot',
+])
+
+/** `collection(...)` / `collectionGroup(...)` naming the secrets collection. */
+/**
+ * Modular-SDK functions that take a collection reference and read across it.
+ * `doc` is deliberately absent: `doc(collection(db, 'wheelSecrets'), shareId)`
+ * is the correct modular spelling of a keyed lookup.
+ */
+const MODULAR_QUERY_WRAPPERS = new Set([
+  'query',
+  'getDocs',
+  'onSnapshot',
+  'getCountFromServer',
+  'getAggregateFromServer',
+])
+
+/** The called name, whether the call is `x.foo()` or a bare `foo()`. */
+function calleeName(node) {
+  if (!node || node.type !== 'CallExpression') return null
+  if (node.callee.type === 'MemberExpression') return memberName(node.callee)
+  return node.callee.type === 'Identifier' ? node.callee.name : null
+}
+
+/**
+ * A `where` filtering on `editTokenHash`, in either SDK style.
+ *
+ * Used to suppress the broader `query` report: such a call is already reported
+ * as `byHash`, with the message that names the actual bug, and stacking a
+ * second error on the same expression buries the more specific one.
+ */
+function isHashFilterCall(node) {
+  return (
+    calleeName(node) === 'where' &&
+    staticString(node.arguments?.[0]) === EDIT_TOKEN_HASH
+  )
+}
+
+/** Whether an argument names the secrets collection, as a literal or the constant. */
+function namesWheelSecrets(argument) {
+  if (!argument) return false
+  const literal = staticString(argument)
+  if (literal !== null) return WHEEL_SECRETS_NAMES.has(literal)
+  return (
+    argument.type === 'Identifier' && WHEEL_SECRETS_NAMES.has(argument.name)
+  )
+}
+
+/**
+ * Both argument positions are checked because the two SDK styles put the
+ * collection name in different places: the namespaced Admin form is
+ * `db.collection('wheelSecrets')`, the modular form is
+ * `collection(db, 'wheelSecrets')` with the handle first. Only the Admin SDK
+ * can read this collection at all — rules deny clients outright — but a rule
+ * that is the sole mechanical enforcement of an invariant should not be the one
+ * thing that recognises only half the ways to write it.
+ */
+function isWheelSecretsCollectionCall(node) {
+  const name = calleeName(node)
+  if (name !== 'collection' && name !== 'collectionGroup') return false
+  return (
+    namesWheelSecrets(node.arguments[0]) || namesWheelSecrets(node.arguments[1])
+  )
+}
+
+/**
+ * Design doc section 6: editor authorization must answer "is this THIS wheel's
+ * token?", never "is this A valid token?". The way that invariant breaks is
+ * always the same shape — a query across `wheelSecrets` filtering on
+ * `editTokenHash` — and the doc calls out that it is easy to reintroduce by
+ * accident when refactoring auth into shared middleware.
+ *
+ * The consequence is a confused deputy: a token that is valid for wheel A
+ * authorises a write to wheel B, because nothing in the query ties the secret
+ * to the wheel being written. It is invisible in review precisely because the
+ * code reads as a perfectly ordinary lookup.
+ *
+ * The correct shape is `collection('wheelSecrets').doc(shareId)` — keyed by the
+ * document ID, with `shareId` taken from the request path. That is why `.doc()`
+ * ends the walk below without a report.
+ *
+ * This rule is TASK-7 acceptance criterion 7. Without it, "no code path queries
+ * wheelSecrets by editTokenHash" is only ever a statement about the moment
+ * someone last looked.
+ */
+const noWheelSecretQueries = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Disallow querying the wheelSecrets collection. Look secrets up by document ID, keyed on the shareId from the request path.',
+    },
+    schema: [],
+    messages: {
+      query:
+        '`.{{method}}()` on the wheelSecrets collection searches across secrets rather than fetching one by ID. That validates a token globally, so an editor of wheel A gains write access to wheel B — the confused-deputy bug in docs/spin-the-wheel-design.md section 6. Use `.doc(shareId)` with the shareId from the request path.',
+      byHash:
+        "Filtering on `editTokenHash` asks 'is this A valid token?' when the only safe question is 'is this THIS wheel's token?'. Fetch wheelSecrets/{shareId} by document ID and compare hashes — see docs/spin-the-wheel-design.md section 6 and lib/wheels/store.ts.",
+    },
+  },
+  create(context) {
+    return {
+      CallExpression(node) {
+        // A `where` on `editTokenHash`, chained (`q.where(...)`) or bare
+        // (`where(...)`, the modular form). Reported independently of the
+        // collection walk below, because by the time a query is assembled
+        // through an intermediate variable the receiver is out of view and this
+        // argument is the only thing left that still names the mistake.
+        if (
+          calleeName(node) === 'where' &&
+          staticString(node.arguments[0]) === EDIT_TOKEN_HASH
+        ) {
+          context.report({ node, messageId: 'byHash' })
+          return
+        }
+
+        if (!isWheelSecretsCollectionCall(node)) return
+
+        // The modular form nests instead of chaining — `query(collection(db,
+        // 'wheelSecrets'), ...)` — so there is no member chain to walk and the
+        // loop below would find nothing. `doc(collection(...), id)` is the
+        // correct modular shape and is left alone, exactly as `.doc()` is.
+        if (
+          node.parent?.type === 'CallExpression' &&
+          node.parent.arguments.includes(node)
+        ) {
+          const wrapper = calleeName(node.parent)
+          if (
+            wrapper &&
+            MODULAR_QUERY_WRAPPERS.has(wrapper) &&
+            !node.parent.arguments.some(isHashFilterCall)
+          ) {
+            context.report({
+              node: node.parent,
+              messageId: 'query',
+              data: { method: wrapper },
+            })
+          }
+          return
+        }
+
+        // Walk outward through the chained calls. `.doc()` is the correct
+        // shape and ends the walk; a query method before it is the bug.
+        let current = node
+        while (
+          current.parent?.type === 'MemberExpression' &&
+          current.parent.object === current
+        ) {
+          const method = memberName(current.parent)
+          if (method === 'doc') return
+
+          const call = current.parent.parent
+          if (method && COLLECTION_QUERY_METHODS.has(method)) {
+            // `collection('wheelSecrets').where('editTokenHash', ...)` matches
+            // both halves of this rule; the `byHash` branch above already
+            // reported it with the better message.
+            if (!isHashFilterCall(call)) {
+              context.report({
+                node: current.parent,
+                messageId: 'query',
+                data: { method },
+              })
+            }
+            return
+          }
+          if (call?.type !== 'CallExpression') return
+          current = call
+        }
+      },
+    }
+  },
+}
+
 const plugin = {
   rules: {
     'no-edge-runtime': noEdgeRuntime,
     'require-nodejs-runtime': requireNodejsRuntime,
     'no-client-firestore-writes': noClientFirestoreWrites,
+    'no-wheel-secret-queries': noWheelSecretQueries,
   },
 }
 

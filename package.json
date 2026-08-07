@@ -18,6 +18,8 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --project unit",
+    "test:emulator": "firebase emulators:exec --only firestore \"vitest run --project emulator\"",
+    "test:all": "npm run test && npm run test:emulator",
     "test:watch": "vitest --project unit"
   },
   "dependencies": {

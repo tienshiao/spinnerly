@@ -48,25 +48,27 @@ prototype is a visual reference, not a specification.
 
 ### Commands
 
-| Command                | What                                            |
-| ---------------------- | ----------------------------------------------- |
-| `npm run dev`          | Dev server                                      |
-| `npm run build`        | Production build; fails on type errors          |
-| `npm run typecheck`    | `tsc --noEmit`                                  |
-| `npm run lint`         | ESLint, including the local `spinnerly/*` rules |
-| `npm run format`       | Prettier write                                  |
-| `npm run format:check` | Prettier check                                  |
-| `npm test`             | Vitest `unit` project — runs on a bare install  |
-| `npm run test:watch`   | Same, in watch mode                             |
+| Command                 | What                                            |
+| ----------------------- | ----------------------------------------------- |
+| `npm run dev`           | Dev server                                      |
+| `npm run build`         | Production build; fails on type errors          |
+| `npm run typecheck`     | `tsc --noEmit`                                  |
+| `npm run lint`          | ESLint, including the local `spinnerly/*` rules |
+| `npm run format`        | Prettier write                                  |
+| `npm run format:check`  | Prettier check                                  |
+| `npm test`              | Vitest `unit` project — runs on a bare install  |
+| `npm run test:watch`    | Same, in watch mode                             |
+| `npm run test:emulator` | Vitest `emulator` project, against Firestore    |
+| `npm run test:all`      | Both                                            |
 
-**The runner is Vitest**, configured in `vitest.config.mts`. Tests are split by
-what they _need_, not by what they cover:
+**The runner is Vitest**, configured in `vitest.config.mts` as two projects.
+Tests are split by what they _need_, not by what they cover:
 
 - `*.test.ts` — the default. No external dependencies, so `npm test` stays
   runnable with nothing but `npm install`: no Java, no emulator. Name a test
   this way unless it needs Firestore.
-- `*.emulator.test.ts` — opts out of the default project. The project that
-  runs these under `firebase emulators:exec` arrives with the first such test.
+- `*.emulator.test.ts` — opts out of the default project and into one that
+  `npm run test:emulator` runs under `firebase emulators:exec`.
 
 The direction is deliberate: `unit` takes everything and the emulator suffix
 opts out. Were it the other way round — `unit` opting in on a `*.unit.test.ts`
@@ -77,8 +79,8 @@ want of an emulator.
 
 Two config details that look optional and are not.
 
-`server-only` is **aliased** to the package's own empty entry, because server
-modules import it and its default entry throws by design. Do not
+`server-only` is **aliased** to the package's own empty entry, because
+`lib/wheels/store.ts` imports it and the default entry throws by design. Do not
 "fix" this by setting `resolve.conditions: ['react-server']` instead — that key
 _replaces_ Vite's default condition list rather than extending it, and applies
 to every dependency in both projects. React then resolves to its
@@ -99,7 +101,8 @@ consistent with the existing suites. Three conventions worth following:
   Prefer the object form with a `label` and `'... $label'` in the title.
 - If a table needs a fixture built in `beforeAll`, wrap the value in a thunk.
   `it.each` evaluates its table at collection time, before any hook has run, so
-  referencing the fixture directly gets `undefined`.
+  referencing the fixture directly gets `undefined`. See the 401 cases in
+  `lib/wheels/store.emulator.test.ts`.
 
 ### The runtime invariant
 
@@ -116,6 +119,21 @@ Both live in `eslint-rules/index.mjs`, with tests in `index.test.mjs`. If you
 change either rule, run `npm test`. Both handle `as const`, template literals,
 `export { runtime }`, dynamic `import()` and `require()` — a naive
 `node.type === 'Literal'` check silently misses all of them.
+
+### The authorization invariant
+
+Editor auth answers **"is this THIS wheel's token?"**, never "is this A valid
+token?". The secret is fetched by document ID — `wheelSecrets/{shareId}`, with
+`shareId` taken from the request path and nowhere else. A query across
+`wheelSecrets` filtering on `editTokenHash` validates a token globally and hands
+an editor of wheel A write access to wheel B. Design doc §6 calls it out as easy
+to reintroduce when refactoring auth into shared middleware, so
+`spinnerly/no-wheel-secret-queries` fails lint on that shape.
+
+`lib/wheels/store.ts` is the only module that should ever touch `wheelSecrets`.
+Route handlers call `assertEditor`, which throws `EditorAuthError` — deliberately
+throwing rather than returning a result, so that forgetting to check it produces
+a 500 and no write, rather than an unauthorised write.
 
 ### Do not reformat
 
