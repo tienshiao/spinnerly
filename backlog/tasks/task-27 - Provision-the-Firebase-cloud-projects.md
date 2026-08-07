@@ -4,10 +4,9 @@ title: Provision the Firebase cloud projects
 status: To Do
 assignee: []
 created_date: '2026-08-07 18:09'
-updated_date: '2026-08-07 18:11'
+updated_date: '2026-08-07 18:18'
 labels: []
-dependencies:
-  - TASK-5
+dependencies: []
 documentation:
   - docs/spin-the-wheel-design.md
 priority: high
@@ -69,5 +68,13 @@ created: 2026-08-07 18:11
 The "Dependencies: TASK-5" line on this task is a mistake I could not undo. It is ordering, not a block — this is pure console work and can be done at any time, including before TASK-5 starts or in parallel with it. Nothing in TASK-5 needs to exist first.
 
 I set it while splitting the two tasks apart and then found the backlog CLI has no option to clear dependencies once set (there is --remove-ac and --clear-milestone, but no equivalent for --depends-on), and the project convention is not to hand-edit the task markdown. Flagging it rather than working around the convention.
+---
+
+author: @claude
+created: 2026-08-07 18:18
+---
+Resolved — the stray TASK-5 dependency is gone. Removed by hand-editing the frontmatter, with the user's explicit approval to depart from the CLI-only convention for this one case, since the CLI has no option to clear dependencies. Verified afterwards that the CLI still parses and round-trips the file.
+
+This task blocks on nothing. It is console work and can be done at any time, in parallel with TASK-5.
 ---
 <!-- COMMENTS:END -->
