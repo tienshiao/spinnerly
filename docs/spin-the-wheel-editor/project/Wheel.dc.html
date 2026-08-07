@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/organic-2961c01a-302a-41de-98ef-dd210a0f5164/styles.css">
+<script src="_ds/organic-2961c01a-302a-41de-98ef-dd210a0f5164/_ds_bundle.js"></script>
+<style>
+:root {
+  --color-bg: #f7f6fb;
+  --color-surface: #ffffff;
+  --color-text: #26252c;
+  --color-accent: #f2545b;
+  --color-accent-2: #3fa7d6;
+  --color-divider: color-mix(in srgb, #26252c 14%, transparent);
+  --color-neutral-100: #ffffff; --color-neutral-200: #f1f0f6; --color-neutral-300: #e2e0ea;
+  --color-neutral-400: #c6c3d2; --color-neutral-500: #a4a1b2; --color-neutral-600: #7d7a8c;
+  --color-neutral-700: #5c5a68; --color-neutral-800: #3d3b46; --color-neutral-900: #26252c;
+  --color-accent-100: #fff0f0; --color-accent-200: #ffdcdd; --color-accent-300: #ffbcbe;
+  --color-accent-400: #fb8f93; --color-accent-500: #f2545b; --color-accent-600: #d93b45;
+  --color-accent-700: #b02730; --color-accent-800: #7d1a21; --color-accent-900: #4f1015;
+  --color-accent-2-100: #eaf6fd; --color-accent-2-200: #cfeaf9; --color-accent-2-300: #a8d9f3;
+  --color-accent-2-400: #6dbfe8; --color-accent-2-500: #3fa7d6; --color-accent-2-600: #2b87b4;
+  --color-accent-2-700: #1d6890; --color-accent-2-800: #144964; --color-accent-2-900: #0d2e40;
+}
+@keyframes wl-fall { 0% { transform: translate3d(0,-10vh,0) rotate(0deg); opacity: 1 } 100% { transform: translate3d(var(--dx,0px), 110vh, 0) rotate(var(--rot,720deg)); opacity: 0.9 } }
+@keyframes wl-pop { 0% { transform: scale(0.85); opacity: 0 } 60% { transform: scale(1.03) } 100% { transform: scale(1); opacity: 1 } }
+@keyframes wl-wob { 0%,100% { transform: rotate(-3deg) } 50% { transform: rotate(3deg) } }
+body { margin: 0; }
+a { color: var(--color-accent-700); }
+a:hover { color: var(--color-accent); }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); position: relative; overflow-x: hidden;">
+
+  <div style="position: absolute; top: -140px; right: -120px; width: 420px; height: 420px; border-radius: 999px; background: var(--color-accent-200); opacity: 0.55; pointer-events: none;"></div>
+  <div style="position: absolute; bottom: -180px; left: -100px; width: 380px; height: 380px; border-radius: 999px; background: var(--color-accent-2-200); opacity: 0.5; pointer-events: none;"></div>
+
+  <header style="position: relative; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; padding: 22px 40px; border-bottom: 1px solid var(--color-divider);">
+    <div style="display: flex; align-items: center; gap: 14px;">
+      <a href="Home.dc.html" style="width: 38px; height: 38px; border-radius: 999px; background: conic-gradient(#f2545b 0 25%, #ffc23c 0 50%, #3fa7d6 0 75%, #2ec4a3 0); box-shadow: inset 0 0 0 5px #fff; flex: none;"></a>
+      <div style="display: flex; flex-direction: column;">
+        <span style="font-family: var(--font-heading); font-size: 24px; line-height: 1;">Team lunch</span>
+        <span style="font-size: 13px; color: var(--color-neutral-600);">Spinnerly</span>
+      </div>
+      <span style="display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; padding: 5px 13px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; background: {{ roleChipBg }}; color: {{ roleChipFg }};">{{ roleLabel }}</span>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <button type="button" class="btn btn-secondary" onClick="{{ toggleRole }}" style="border-radius: 999px;">{{ roleSwitchLabel }}</button>
+      <button type="button" class="btn btn-primary" onClick="{{ copyLink }}" style="border-radius: 999px;">{{ copyLabel }}</button>
+    </div>
+  </header>
+
+  <main style="position: relative; display: grid; gap: 34px; padding: 34px 40px 60px; align-items: start; grid-template-columns: minmax(380px, 1fr) minmax(400px, 1fr);">
+
+    <section style="display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 28px; border-radius: var(--radius-lg); background: var(--color-neutral-100); border: 1px solid var(--color-divider); box-shadow: var(--shadow-sm);">
+      <div style="width: 100%; max-width: 480px; position: relative;">
+        <div style="position: absolute; top: -6px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 17px solid transparent; border-right: 17px solid transparent; border-top: 34px solid var(--color-accent-600); z-index: 2; filter: drop-shadow(0 2px 3px rgba(46,43,37,0.3));"></div>
+        {{ wheel }}
+      </div>
+      <button type="button" class="btn btn-primary" onClick="{{ spin }}" disabled="{{ spinDisabled }}" style="border-radius: 999px; font-size: 20px; padding: 16px 46px; letter-spacing: 0.01em; box-shadow: var(--shadow-md);">{{ spinLabel }}</button>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 22px;">
+
+      <div style="padding: 24px; border-radius: var(--radius-lg); background: var(--color-neutral-100); border: 1px solid var(--color-divider); box-shadow: var(--shadow-sm);">
+        <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px;">
+          <h2 style="margin: 0; font-size: 26px;">Options</h2>
+          <span style="font-size: 13px; color: var(--color-neutral-600);">{{ optionCountLabel }}</span>
+        </div>
+
+        <sc-if value="{{ isEditor }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <sc-for list="{{ options }}" as="o" hint-placeholder-count="6">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 12px; border-radius: 999px; background: {{ o.rowBg }}; border: 1px solid var(--color-divider);">
+                <span style="flex: none; width: 16px; height: 16px; border-radius: 999px; background: {{ o.color }};"></span>
+                <input value="{{ o.label }}" onChange="{{ o.onChange }}" style="flex: 1; min-width: 0; border: 0; background: transparent; font-family: var(--font-body); font-size: 15px; color: var(--color-text); padding: 4px 0;" />
+                <sc-if value="{{ o.picked }}" hint-placeholder-val="{{ false }}">
+                  <span style="flex: none; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; background: var(--color-accent-2-200); color: var(--color-accent-2-800);">Picked</span>
+                </sc-if>
+                <button type="button" onClick="{{ o.onRemove }}" title="Remove" style="flex: none; width: 30px; height: 30px; border-radius: 999px; border: 0; cursor: pointer; background: transparent; color: var(--color-neutral-600); font-size: 18px; line-height: 1;">×</button>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 14px;">
+            <input class="input" value="{{ draft }}" onChange="{{ onDraft }}" onKeyDown="{{ onDraftKey }}" placeholder="Add a spot…" style="flex: 1; border-radius: 999px;" />
+            <button type="button" class="btn btn-secondary" onClick="{{ addOption }}" style="border-radius: 999px;">Add</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isViewer }}" hint-placeholder-val="{{ false }}">
+          <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <sc-for list="{{ options }}" as="o" hint-placeholder-count="6">
+              <span style="display: inline-flex; align-items: center; gap: 9px; padding: 8px 16px 8px 10px; border-radius: 999px; background: {{ o.rowBg }}; border: 1px solid var(--color-divider); font-size: 15px;">
+                <span style="width: 14px; height: 14px; border-radius: 999px; background: {{ o.color }};"></span>{{ o.label }}
+              </span>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="padding: 24px; border-radius: var(--radius-lg); background: var(--color-accent-2-100); border: 1px solid var(--color-accent-2-300);">
+        <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px;">
+          <h2 style="margin: 0; font-size: 22px;">Suggestions</h2>
+          <span style="font-size: 13px; color: var(--color-accent-2-700);">{{ suggestionCountLabel }}</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <sc-for list="{{ suggestions }}" as="s" hint-placeholder-count="2">
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; border-radius: var(--radius-md); background: var(--color-neutral-100); border: 1px dashed var(--color-accent-2-400);">
+              <div style="flex: 1; min-width: 0;">
+                <div style="font-size: 16px;">{{ s.label }}</div>
+                <sc-if value="{{ s.meta }}" hint-placeholder-val="{{ false }}">
+                  <div style="font-size: 12px; color: var(--color-neutral-600);">{{ s.meta }}</div>
+                </sc-if>
+              </div>
+              <sc-if value="{{ s.actionable }}" hint-placeholder-val="{{ true }}">
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" onClick="{{ s.onApprove }}" style="border: 0; cursor: pointer; border-radius: 999px; padding: 7px 15px; font-family: var(--font-heading); font-size: 13px; background: var(--color-accent-2-500); color: var(--color-neutral-100);">Approve</button>
+                  <button type="button" onClick="{{ s.onReject }}" style="cursor: pointer; border-radius: 999px; padding: 7px 15px; font-family: var(--font-heading); font-size: 13px; background: transparent; border: 1px solid var(--color-divider); color: var(--color-neutral-700);">Reject</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ s.settled }}" hint-placeholder-val="{{ false }}">
+                <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; padding: 5px 12px; border-radius: 999px; background: {{ s.stateBg }}; color: {{ s.stateFg }};">{{ s.stateLabel }}</span>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ isViewer }}" hint-placeholder-val="{{ false }}">
+          <div style="display: flex; gap: 8px; margin-top: 14px;">
+            <input class="input" value="{{ suggestDraft }}" onChange="{{ onSuggestDraft }}" onKeyDown="{{ onSuggestKey }}" placeholder="Suggest a spot…" style="flex: 1; border-radius: 999px;" />
+            <button type="button" class="btn btn-primary" onClick="{{ addSuggestion }}" style="border-radius: 999px;">Suggest</button>
+          </div>
+        </sc-if>
+      </div>
+
+    </section>
+  </main>
+
+  {{ confetti }}
+
+  <sc-if value="{{ hasWinner }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeWinner }}" style="position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, #2e2b25 45%, transparent);">
+      <div style="width: min(460px, 92vw); padding: 40px 36px 32px; border-radius: var(--radius-lg); background: var(--color-neutral-100); box-shadow: var(--shadow-lg); text-align: center; animation: wl-pop 320ms ease-out both;">
+        <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-accent-700);">Lunch is decided</div>
+        <div style="margin: 14px 0 6px; font-family: var(--font-heading); font-size: 44px; line-height: 1.05; color: var(--color-accent-800);">{{ winnerLabel }}</div>
+        <p style="margin: 0 0 26px; font-size: 15px; color: var(--color-neutral-700);">Marked as picked in the list. The wheel keeps every option.</p>
+        <div style="display: flex; gap: 10px; justify-content: center;">
+          <button type="button" class="btn btn-primary" onClick="{{ closeWinner }}" style="border-radius: 999px; padding: 12px 28px;">Nice</button>
+          <button type="button" class="btn btn-secondary" onClick="{{ spinAgain }}" style="border-radius: 999px; padding: 12px 28px;">Spin again</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div style="position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); z-index: 50; padding: 12px 24px; border-radius: 999px; background: var(--color-accent-900); color: var(--color-accent-100); font-size: 14px; box-shadow: var(--shadow-lg);">{{ toast }}</div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}">
+const SLICE = ['#f2545b','#ffc23c','#3fa7d6','#7d5ba6','#2ec4a3','#ff7f51','#4a6cf7','#ff5fa2','#8ed44a','#00b3b3'];
+const INK = ['#ffffff','#4f3400','#ffffff','#ffffff','#0d3b33','#4f1a08','#ffffff','#ffffff','#20390d','#ffffff'];
+let uid = 100;
+
+class Component extends DCLogic {
+  state = {
+    role: 'editor',
+    layout: 'split',
+    rotation: 0,
+    spinning: false,
+    winner: null,
+    draft: '',
+    suggestDraft: '',
+    toast: '',
+    copied: false,
+    burst: 0,
+    options: [
+      { id: 1, label: 'Taqueria Vista' },
+      { id: 2, label: 'Noodle Bar 88' },
+      { id: 3, label: 'The Green Bowl' },
+      { id: 4, label: 'Sunny Deli' },
+      { id: 5, label: 'Pizzeria Fico' },
+      { id: 6, label: 'Curry House' }
+    ],
+    picked: [],
+    suggestions: [
+      { id: 11, label: 'Kebab Cart on 3rd', by: 'Priya', status: 'pending' },
+      { id: 12, label: 'Soup & Sons', by: 'Marcus', status: 'pending' }
+    ]
+  };
+
+  componentDidMount() {
+    const view = new URLSearchParams(location.search).get('view');
+    if (view === 'guest') this.setState({ role: 'viewer' });
+  }
+
+  flash(msg) {
+    clearTimeout(this._t);
+    this.setState({ toast: msg });
+    this._t = setTimeout(() => this.setState({ toast: '' }), 2200);
+  }
+
+  spin = () => {
+    const opts = this.state.options;
+    if (this.state.spinning || this.state.role !== 'editor' || opts.length < 2) return;
+    const i = Math.floor(Math.random() * opts.length);
+    const seg = 360 / opts.length;
+    const cur = this.state.rotation;
+    const base = cur - (cur % 360) + 360 * 6;
+    const target = base + ((360 - (i * seg + seg / 2)) % 360);
+    this.setState({ spinning: true, rotation: target, winner: null });
+    clearTimeout(this._s);
+    this._s = setTimeout(() => {
+      const w = this.state.options[i];
+      if (!w) return this.setState({ spinning: false });
+      this.setState(s => ({
+        spinning: false,
+        winner: w.label,
+        burst: s.burst + 1,
+        picked: s.picked.includes(w.id) ? s.picked : s.picked.concat(w.id)
+      }));
+    }, 4400);
+  };
+
+  renderVals() {
+    const s = this.state;
+    const isEditor = s.role === 'editor';
+    const n = s.options.length;
+    const seg = 360 / Math.max(n, 1);
+    const R = 190, C = 200;
+
+    const wedges = s.options.map((o, i) => {
+      const a0 = (i * seg - 90) * Math.PI / 180;
+      const a1 = ((i + 1) * seg - 90) * Math.PI / 180;
+      const x0 = C + R * Math.cos(a0), y0 = C + R * Math.sin(a0);
+      const x1 = C + R * Math.cos(a1), y1 = C + R * Math.sin(a1);
+      const d = `M ${C} ${C} L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R} ${R} 0 ${seg > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`;
+      const mid = i * seg + seg / 2 - 90;
+      const norm = ((mid % 360) + 360) % 360;
+      const flip = norm > 90 && norm < 270;
+      const lx = C + R * 0.62;
+      const label = o.label.length > 18 ? o.label.slice(0, 17) + '…' : o.label;
+      return React.createElement('g', { key: o.id },
+        React.createElement('path', { d, fill: SLICE[i % SLICE.length], stroke: '#ffffff', strokeWidth: 3 }),
+        React.createElement('text', {
+          x: lx, y: C,
+          transform: `rotate(${mid} ${C} ${C})${flip ? ` rotate(180 ${lx} ${C})` : ''}`,
+          textAnchor: 'middle', dominantBaseline: 'middle',
+          fill: INK[i % INK.length],
+          style: { font: '600 15px "Figtree", system-ui, sans-serif', letterSpacing: '0.01em' }
+        }, label)
+      );
+    });
+
+    const wheel = React.createElement('div', { style: { width: '100%', aspectRatio: '1 / 1' } },
+      React.createElement('svg', {
+        viewBox: '0 0 400 400',
+        style: {
+          width: '100%', height: '100%', display: 'block',
+          borderRadius: '999px',
+          filter: 'drop-shadow(0 12px 28px rgba(46,43,37,0.22))',
+          transform: `rotate(${s.rotation}deg)`,
+          transition: s.spinning ? 'transform 4.3s cubic-bezier(0.16, 0.85, 0.16, 1)' : 'none'
+        }
+      },
+        React.createElement('circle', { cx: C, cy: C, r: R + 8, fill: '#ffffff' }),
+        ...wedges,
+        React.createElement('circle', { cx: C, cy: C, r: 34, fill: '#ffffff', stroke: '#f2545b', strokeWidth: 5 })
+      )
+    );
+
+    const confetti = s.burst && s.winner
+      ? React.createElement('div', {
+          key: s.burst,
+          style: { position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 45, overflow: 'hidden' }
+        }, Array.from({ length: 70 }, (_, i) => React.createElement('span', {
+          key: i,
+          style: {
+            position: 'absolute', top: 0, left: (i * 1.41 % 100) + '%',
+            width: i % 3 ? '9px' : '13px', height: i % 3 ? '14px' : '13px',
+            borderRadius: i % 3 ? '2px' : '999px',
+            background: SLICE[i % SLICE.length],
+            '--dx': ((i % 7) - 3) * 34 + 'px',
+            '--rot': (i % 2 ? 900 : -720) + 'deg',
+            animation: `wl-fall ${2 + (i % 5) * 0.35}s cubic-bezier(0.3,0.6,0.5,1) ${(i % 11) * 0.09}s forwards`
+          }
+        })))
+      : null;
+
+    const options = s.options.map((o, i) => ({
+      id: o.id,
+      label: o.label,
+      color: SLICE[i % SLICE.length],
+      picked: s.picked.includes(o.id),
+      rowBg: s.picked.includes(o.id) ? 'var(--color-accent-2-100)' : 'var(--color-neutral-200)',
+      onChange: e => {
+        const v = e.target.value;
+        this.setState(st => ({ options: st.options.map(x => x.id === o.id ? { ...x, label: v } : x) }));
+      },
+      onRemove: () => this.setState(st => ({ options: st.options.filter(x => x.id !== o.id) }))
+    }));
+
+    const suggestions = s.suggestions.map(g => ({
+      label: g.label,
+      meta: g.status === 'approved' ? 'added to the wheel' : g.status === 'rejected' ? 'declined' : '',
+      actionable: g.status === 'pending' && isEditor,
+      settled: g.status !== 'pending' || !isEditor,
+      stateLabel: g.status === 'pending' ? 'Waiting' : g.status === 'approved' ? 'Added' : 'Declined',
+      stateBg: g.status === 'approved' ? 'var(--color-accent-2-200)' : g.status === 'rejected' ? 'var(--color-neutral-200)' : 'var(--color-accent-200)',
+      stateFg: g.status === 'approved' ? 'var(--color-accent-2-800)' : g.status === 'rejected' ? 'var(--color-neutral-700)' : 'var(--color-accent-800)',
+      onApprove: () => {
+        this.setState(st => ({
+          options: st.options.concat({ id: ++uid, label: g.label }),
+          suggestions: st.suggestions.map(x => x.id === g.id ? { ...x, status: 'approved' } : x)
+        }));
+        this.flash(`${g.label} added to the wheel`);
+      },
+      onReject: () => this.setState(st => ({ suggestions: st.suggestions.map(x => x.id === g.id ? { ...x, status: 'rejected' } : x) }))
+    }));
+
+    const pending = s.suggestions.filter(g => g.status === 'pending').length;
+    const addOption = () => {
+      const v = s.draft.trim();
+      if (!v) return;
+      this.setState(st => ({ options: st.options.concat({ id: ++uid, label: v }), draft: '' }));
+    };
+    const addSuggestion = () => {
+      const v = s.suggestDraft.trim();
+      if (!v) return;
+      this.setState(st => ({ suggestions: st.suggestions.concat({ id: ++uid, label: v, by: 'You', status: 'pending' }), suggestDraft: '' }));
+      this.flash('Sent to the editor for approval');
+    };
+
+    return {
+      wheel, confetti, options, suggestions,
+      isEditor, isViewer: !isEditor,
+      roleLabel: isEditor ? 'Editor' : 'Viewer',
+      roleChipBg: isEditor ? 'var(--color-accent-200)' : 'var(--color-accent-2-200)',
+      roleChipFg: isEditor ? 'var(--color-accent-800)' : 'var(--color-accent-2-800)',
+      roleSwitchLabel: isEditor ? 'Preview viewer link' : 'Back to editing',
+      toggleRole: () => this.setState({ role: isEditor ? 'viewer' : 'editor', winner: null }),
+      copyLabel: s.copied ? 'Link copied' : 'Copy viewer link',
+      copyLink: () => {
+        const url = location.origin + location.pathname + '?view=guest';
+        if (navigator.clipboard) navigator.clipboard.writeText(url).catch(() => {});
+        this.setState({ copied: true });
+        this.flash('Viewer link copied — they can look and suggest, not edit');
+        clearTimeout(this._c);
+        this._c = setTimeout(() => this.setState({ copied: false }), 2400);
+      },
+      spin: this.spin,
+      spinDisabled: !isEditor || s.spinning || n < 2,
+      spinLabel: s.spinning ? 'Spinning…' : isEditor ? 'Spin the wheel' : 'Only the editor can spin',
+      spinHint: isEditor ? 'Every option stays on the wheel after a win — spin as many times as you like.' : 'Watching live. Add a suggestion below and the editor decides.',
+      optionCountLabel: `${n} on the wheel`,
+      suggestionCountLabel: pending ? `${pending} waiting` : 'all caught up',
+      suggestionHint: isEditor ? 'Anyone with the viewer link can propose a spot. You decide what lands on the wheel.' : 'Your suggestions go to the editor for approval.',
+      draft: s.draft,
+      onDraft: e => this.setState({ draft: e.target.value }),
+      onDraftKey: e => { if (e.key === 'Enter') addOption(); },
+      addOption,
+      suggestDraft: s.suggestDraft,
+      onSuggestDraft: e => this.setState({ suggestDraft: e.target.value }),
+      onSuggestKey: e => { if (e.key === 'Enter') addSuggestion(); },
+      addSuggestion,
+      hasWinner: !!s.winner,
+      winnerLabel: s.winner,
+      closeWinner: () => this.setState({ winner: null }),
+      spinAgain: () => { this.setState({ winner: null }); setTimeout(this.spin, 120); },
+      toast: s.toast
+    };
+  }
+}
+</script>
+</body>
+</html>
