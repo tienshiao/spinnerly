@@ -4,7 +4,7 @@ title: Accessibility pass and cross-device audit
 status: To Do
 assignee: []
 created_date: '2026-08-07 08:40'
-updated_date: '2026-08-07 08:48'
+updated_date: '2026-08-07 21:48'
 labels: []
 dependencies:
   - TASK-18
@@ -43,3 +43,45 @@ Audit: walk both pages on a real phone, not just a narrow desktop window. Touch 
 - [ ] #13 No horizontal overflow anywhere from 320px to 1920px
 - [ ] #14 Every interactive control is reachable and operable by keyboard with a visible focus ring
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-07 19:31
+---
+Concrete finding from TASK-28 (landing page), already measured — three text nodes on / fail WCAG AA:
+
+1. 'Open a wheel' (header), 14px — #f7f6fb on #f2545b, 3.15:1
+2. 'Make a wheel' (hero), 18px — #f7f6fb on #f2545b, 3.15:1
+3. 'Make the wheel now, argue never.' (band), 18px — #ffffff on #f2545b, 3.39:1
+
+1 and 2 are not landing-page bugs. They are the shared Button 'default' variant from TASK-4 — bg-primary on text-primary-foreground — so every primary button in the app carries this ratio, on every screen. globals.css states the cause plainly: the accent-to-ground pair is tuned to 3:1, which carries icons and large text but not body copy. That is fine for the 40px band heading, which clears the 3:1 large-text bar, and not fine for a 14px button label.
+
+The fix is a design-system decision, not a per-page one. Options, roughly in increasing order of blast radius: darken the primary button fill to accent-600 (#d93b45, 4.0:1 against the ground — still short of 4.5) or accent-700 (#b02730, 6.14:1, comfortably passing but a visibly deeper red than the prototype); or keep the fill and darken nothing, accepting the 3:1 pairing as a documented deviation.
+
+Worth deciding once here rather than per screen, since it lands on every button the product ships.
+
+Also flagged in the same sweep: the three use-case pill colour pairs on the landing page (#ffe6ab/#6b4a00, #d6f5ea/#0d4c3f, #e8e2fb/#3a2a63) are one-off literals with no home in the theme ramps. They pass AA, but they are unowned colour and would be worth either tokenising or replacing during this pass.
+---
+
+author: @claude
+created: 2026-08-07 21:48
+---
+Correction to my previous comment — item 3's ratio was wrong, and it is the number TASK-26 would have decided from.
+
+I recorded the band paragraph as '#ffffff on #f2545b, 3.39:1'. That measured the SPECIFIED colour. The element also carries opacity 0.92 (from the prototype), which composites the painted text to #fef1f2. Re-measured with opacity folded in: 3.08:1, not 3.39:1. Slightly worse than logged, and still short of the 4.5:1 it needs at 18px normal weight.
+
+Corrected table for the three failures on /:
+
+1. 'Open a wheel' (header), 14px — #f7f6fb on #f2545b, 3.15:1, needs 4.5
+2. 'Make a wheel' (hero), 18px — #f7f6fb on #f2545b, 3.15:1, needs 4.5
+3. 'Make the wheel now, argue never.' (band), 18px — painted #fef1f2 on #f2545b, 3.08:1, needs 4.5
+
+26 other text nodes on the page pass.
+
+One extra option for item 3 specifically, which items 1 and 2 do not have: dropping opacity-92 lifts it from 3.08 to 4.04 without touching the band colour or the shared button variant. That still fails 4.5, so it is a partial mitigation rather than a fix — I left it in place because it is prototype-faithful and does not resolve the criterion either way. Flagging it because it is free if this pass decides to take it.
+
+General lesson for the rest of this audit: measure the painted colour, not the specified one. Any element under an opacity or inside an opacity-carrying ancestor will read better than it renders.
+---
+<!-- COMMENTS:END -->

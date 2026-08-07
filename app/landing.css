@@ -1,0 +1,60 @@
+/* Landing page motion.
+ *
+ * Scoped to this page rather than added to theme.css: these are two decorative
+ * animations belonging to one route, and theme.css is a hand-curated token set
+ * whose header rules component styling out. Nothing else in the app uses them.
+ *
+ * Ported from docs/spin-the-wheel-editor/project/Home.dc.html, where they are
+ * named hm-drift and hm-turn.
+ */
+
+@keyframes spinnerly-drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-14px);
+  }
+}
+
+@keyframes spinnerly-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The fallback is load-bearing, not decoration. `animation` is a shorthand, so
+ * an unresolvable var() inside it is invalid at computed-value time and the
+ * whole declaration is dropped — an element given this class without the inline
+ * duration would silently not animate at all, rather than fall back to a
+ * default. */
+.landing-drift {
+  animation: spinnerly-drift var(--landing-drift-duration, 9s) ease-in-out
+    infinite;
+}
+
+.landing-turn {
+  animation: spinnerly-turn 26s linear infinite;
+}
+
+/* Both animations are purely decorative — a slowly turning colour wheel and
+ * three circles bobbing behind the content — so the reduced-motion response is
+ * to remove them outright rather than shorten them. Nothing is communicated by
+ * the movement that is lost when it stops.
+ *
+ * `animation: none` rather than `animation-play-state: paused`: paused freezes
+ * the wheel wherever the first frame left it, which on a conic-gradient disc is
+ * a visibly arbitrary rotation. Removing the animation returns both elements to
+ * their untransformed state, which is the composition the prototype was drawn
+ * in.
+ *
+ * The reduced-motion query is the one place a `!important` is worth it here.
+ * These rules exist to override, and a future utility class landing on the same
+ * element must not be able to quietly reinstate the motion. */
+@media (prefers-reduced-motion: reduce) {
+  .landing-drift,
+  .landing-turn {
+    animation: none !important;
+  }
+}
