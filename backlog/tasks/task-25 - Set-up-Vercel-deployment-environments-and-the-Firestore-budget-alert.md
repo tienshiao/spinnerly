@@ -4,6 +4,7 @@ title: 'Set up Vercel deployment, environments and the Firestore budget alert'
 status: To Do
 assignee: []
 created_date: '2026-08-07 08:40'
+updated_date: '2026-08-07 17:54'
 labels: []
 dependencies:
   - TASK-2
@@ -34,3 +35,17 @@ While here, check whether Vercel Firewall rate limiting is available on the curr
 - [ ] #4 Whether Vercel Firewall rate limiting is available on the current plan is checked and the finding recorded in the design doc
 - [ ] #5 The service account key is stored only as a Vercel environment secret
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-07 17:54
+---
+From TASK-5: with the Firebase Emulator Suite handling local dev, this task is now the only place service account credentials are ever handled. They go from the Firebase console straight into the Vercel dashboard and never touch a developer machine.
+
+Two env scopes to set, against two different Firebase projects: Production against the prod project, Preview against the preview project, so preview deploys cannot write production data. The emulator does not cover previews — they run in the cloud and cannot reach a local emulator.
+
+Note the private key format trap when doing this: Vercel's dashboard accepts real newlines, while a local .env file needs them escaped. TASK-5 makes the code accept both, but be aware that copying a value between the two by hand will otherwise break it.
+---
+<!-- COMMENTS:END -->

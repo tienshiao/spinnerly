@@ -222,6 +222,39 @@ Durable Objects, which discards the realtime model this entire design rests on.
 per-IP limits would need an external store (Upstash Redis is the usual answer).
 **Deferred — not in v1.** See §7.
 
+### Firestore provisioning
+
+**Native mode, `us-east1`.** Both are permanent — neither can be changed
+without recreating the project, so they're recorded here rather than left to
+whoever clicks through the console.
+
+Native mode because Datastore mode has no `onSnapshot`, which is the entire
+reason this design is on Firestore. `us-east1` because the write path is Vercel
+→ Firestore and Vercel's functions default to `iad1`; the multi-region `nam5`
+buys availability insurance this doesn't need at a latency and cost premium.
+
+Reads go browser → Firestore directly, so if the userbase is ever
+predominantly non-US, this is the decision to revisit — and revisiting it means
+a migration, not a setting.
+
+### Local development runs on the emulator
+
+**The Firebase Emulator Suite, not a shared dev project.** Two cloud projects
+exist — production, and one that Vercel preview deploys point at — and neither
+is used for local work.
+
+The reason is credential blast radius. With `FIRESTORE_EMULATOR_HOST` set, the
+Admin SDK skips credential resolution entirely, so **no service account key ever
+lands on a developer machine**. The private key exists in exactly one place, the
+Vercel dashboard, and local setup involves no secrets at all.
+
+It also makes §5 testable. Rules against a live project can only be checked by
+hand, once; against the emulator they're unit-testable on every change, which
+matters because `allow list: if false` is the whole security model.
+
+**The emulator does not cover preview deploys** — they run in the cloud and
+can't reach a laptop. That's why a second cloud project exists rather than one.
+
 ---
 
 ## 4. Data model
@@ -626,6 +659,8 @@ scoping separately rather than bolting on.
 | 15  | Is the "Picked" chip persisted?            | **No — local-only**, client state in the spinning browser, gone on refresh. No schema, no endpoint (§4)                     |
 | 16  | Where do the editor affordances live?      | **Title inline in the header; `suggestionsOpen` in the Suggestions panel header; duplicate in a header overflow menu** (§7) |
 | 17  | Does duplicate rename the fork?            | **No — title copied verbatim.** Renaming is one field edit away if the forker wants it (§8)                                 |
+| 18  | Firestore mode and location?               | **Native mode, `us-east1`** — pairs with Vercel's `iad1`; both choices are permanent (§3)                                   |
+| 19  | Local development environment?             | **Firebase Emulator Suite** — no cloud project, no service account on dev machines, and it makes §5 rules testable (§3)     |
 
 Decisions 10–16 resolve conflicts between this document and the Claude Design
 prototype in `docs/spin-the-wheel-editor/`. Where the two disagree, this table

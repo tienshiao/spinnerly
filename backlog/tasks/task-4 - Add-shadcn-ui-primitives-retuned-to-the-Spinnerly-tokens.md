@@ -1,11 +1,11 @@
 ---
 id: TASK-4
 title: Add shadcn/ui primitives retuned to the Spinnerly tokens
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:35'
-updated_date: '2026-08-07 16:46'
+updated_date: '2026-08-07 17:16'
 labels: []
 dependencies:
   - TASK-2
@@ -158,3 +158,19 @@ This matters here because shadcn primitives reach for exactly those — shadow-x
 The reset is deliberate: before it, --radius-xl survived at 12px, so rounded-xl rendered a smaller corner than rounded-md at 16px. A silently-absent utility is recoverable; a silently-inverted scale is not.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Installed button, input, dialog, badge and sonner from shadcn on Base UI 1.7.0, themed from the Organic ramp rather than shadcn's defaults.
+
+Most of what shadcn init generates was rejected. It rewrites globals.css and layout.tsx on the assumption that it owns the theme, and one change was actively harmful: it emits a --color-accent binding that lands after theme.css, so Organic's coral silently became a near-white grey and took the focus ring, link hover and selection tint with it. app/shadcn-tokens.css is hand-written instead, mapping every semantic name onto an Organic token through var() with no hex literals, and rebinding the dark variant to an explicit .dark ancestor so the dark: utilities baked into every shadcn component cannot fire on a design that has no dark mode.
+
+Components are retuned to Organic's .btn, .input, .tag and .dialog rules, with the shadcn focus ring removed in favour of the global :focus-visible outline, the display face restored on buttons, and the radius and shadow steps that TASK-3's namespace resets removed mapped back onto Organic's scale.
+
+Two accessibility problems were found and fixed beyond the retune. Base UI's modal dialog leaves the background in the tab order (mui/base-ui#4678, open upstream, fix PR stalled since June 2026), so tabbing behind an open dialog reached real page controls; lib/base-ui-inert.ts mirrors the upstream fix from the outside and deletes cleanly when it lands. And Organic's space scale was defined in Tailwind's --spacing-* namespace, which rebinds numeric sizing utilities as well as spacing — button icons were rendering 10% oversized — so it moved to --space-*.
+
+Verified in a browser against a running dev server rather than only by inspection: focus containment reaches zero real page controls over ten tabs; Escape, close button and backdrop click all close, release inert and the scroll lock, and restore focus to the trigger; primary hover computes to accent-600 and secondary to text at 7%, matching the prototype exactly. Suite green throughout — lint, typecheck, format:check, test (20 pass), production build.
+
+app/kitchen-sink is a dev-only route rendering every primitive, variant, size and state for visual review. Merged to main as 354c667.
+<!-- SECTION:FINAL_SUMMARY:END -->
