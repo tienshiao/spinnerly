@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test'
+import { describe, it } from 'vitest'
 import { RuleTester } from 'eslint'
 import tsParser from '@typescript-eslint/parser'
 import plugin from './index.mjs'
@@ -311,6 +311,125 @@ ruleTester.run(
         filename: COMPONENT,
         code: `import * as fs from 'firebase/firestore'\nconst g = fs\nconst { deleteDoc } = g\nexport const x = deleteDoc`,
         errors: [{ messageId: 'write', data: { name: 'deleteDoc' } }],
+      },
+    ],
+  },
+)
+
+ruleTester.run(
+  'spinnerly/no-wheel-secret-queries',
+  plugin.rules['no-wheel-secret-queries'],
+  {
+    valid: [
+      // The correct shape: keyed by document ID, taken from the request path.
+      {
+        filename: LIB,
+        code: `const s = await db.collection('wheelSecrets').doc(shareId).get()`,
+      },
+      // Same, through the exported constant.
+      {
+        filename: LIB,
+        code: `const s = await db.collection(WHEEL_SECRETS).doc(shareId).get()`,
+      },
+      // Querying any other collection is none of this rule's business.
+      {
+        filename: LIB,
+        code: `const s = await db.collection('wheels').where('title', '==', t).get()`,
+      },
+      {
+        filename: LIB,
+        code: `const s = await db.collection('suggestions').orderBy('createdAt').limit(20).get()`,
+      },
+      // A `where` on a field that merely resembles the hash.
+      {
+        filename: LIB,
+        code: `const s = await db.collection('wheels').where('editTokenHashes', '==', h).get()`,
+      },
+      // Reading the whole wheel document is fine — it holds no secret.
+      {
+        filename: LIB,
+        code: `const w = await db.collection('wheels').doc(shareId).get()`,
+      },
+      // The correct modular spelling of a keyed lookup.
+      {
+        filename: LIB,
+        code: `const s = await getDoc(doc(collection(db, 'wheelSecrets'), shareId))`,
+      },
+    ],
+    invalid: [
+      // The anti-pattern, verbatim from design doc section 6.
+      {
+        filename: LIB,
+        code: `const snap = await db.collection('wheelSecrets').where('editTokenHash', '==', hash(bearer)).limit(1).get()`,
+        errors: [{ messageId: 'byHash' }],
+      },
+      // Filtering by the hash off any receiver at all — by the time a query is
+      // assembled through an intermediate the collection is out of view, and
+      // this argument is the only thing still naming the mistake.
+      {
+        filename: LIB,
+        code: `const snap = await someQuery.where('editTokenHash', '==', h).get()`,
+        errors: [{ messageId: 'byHash' }],
+      },
+      // Any query across the secrets collection, whatever it filters on.
+      {
+        filename: LIB,
+        code: `const snap = await db.collection('wheelSecrets').where('createdAt', '<', cutoff).get()`,
+        errors: [{ messageId: 'query', data: { method: 'where' } }],
+      },
+      {
+        filename: LIB,
+        code: `const snap = await db.collection('wheelSecrets').orderBy('createdAt').get()`,
+        errors: [{ messageId: 'query', data: { method: 'orderBy' } }],
+      },
+      {
+        filename: LIB,
+        code: `const snap = await db.collection('wheelSecrets').limit(10).get()`,
+        errors: [{ messageId: 'query', data: { method: 'limit' } }],
+      },
+      // `.get()` straight on the collection reads every secret in the database.
+      {
+        filename: LIB,
+        code: `const snap = await db.collection('wheelSecrets').get()`,
+        errors: [{ messageId: 'query', data: { method: 'get' } }],
+      },
+      {
+        filename: LIB,
+        code: `const ids = await db.collection('wheelSecrets').listDocuments()`,
+        errors: [{ messageId: 'query', data: { method: 'listDocuments' } }],
+      },
+      // Through the exported constant rather than the raw string.
+      {
+        filename: LIB,
+        code: `const snap = await db.collection(WHEEL_SECRETS).where('editTokenHash', '==', h).get()`,
+        errors: [{ messageId: 'byHash' }],
+      },
+      // A collection-group query reaches every wheelSecrets collection there is.
+      {
+        filename: LIB,
+        code: `const snap = await db.collectionGroup('wheelSecrets').where('createdAt', '<', c).get()`,
+        errors: [{ messageId: 'query', data: { method: 'where' } }],
+      },
+      // The rule is not scoped to lib/ — the same mistake in a route is the
+      // same bug, and shared middleware is where the doc says it comes back.
+      {
+        filename: ROUTE,
+        code: `export const runtime = 'nodejs'\nconst snap = await db.collection('wheelSecrets').where('editTokenHash', '==', h).get()`,
+        errors: [{ messageId: 'byHash' }],
+      },
+      // The modular spelling, where the collection name is the SECOND argument
+      // and `where` is a bare call rather than a chained method. This is the
+      // design doc's anti-pattern written in the other SDK style.
+      {
+        filename: LIB,
+        code: `const snap = await getDocs(query(collection(db, 'wheelSecrets'), where('editTokenHash', '==', h)))`,
+        errors: [{ messageId: 'byHash' }],
+      },
+      // Modular, filtering on something else — still a query across secrets.
+      {
+        filename: LIB,
+        code: `const snap = await getDocs(query(collection(db, 'wheelSecrets'), limit(5)))`,
+        errors: [{ messageId: 'query', data: { method: 'query' } }],
       },
     ],
   },
