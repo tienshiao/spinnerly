@@ -162,6 +162,12 @@ app/
   page.tsx                        Landing (TASK-22)
   w/[shareId]/page.tsx            Wheel page (TASK-17)
   api/                            Route handlers — Node runtime, Admin SDK
+lib/firebase/
+  admin.ts                        Admin SDK — server-only, the write path
+  client.ts                       Client SDK — client-only, reads only
+scripts/
+  seed-emulator.mjs               Fixture data for a fresh emulator
+firebase.json, .firebaserc        Emulator config; demo-spinnerly is local-only
 eslint-rules/                     Local lint rules enforcing design invariants
 docs/
   spin-the-wheel-design.md        The design doc. Read this first.
@@ -183,24 +189,120 @@ visual output in React; don't port their internal structure.
 
 ## Getting started
 
-Requires Node 22+ and npm.
+Requires Node 22+, npm, and a JDK 11+ for the Firestore emulator.
 
 ```bash
 npm install
-npm run dev
+npm run dev:emulator
 ```
 
-| Command                | What                                            |
-| ---------------------- | ----------------------------------------------- |
-| `npm run dev`          | Dev server                                      |
-| `npm run build`        | Production build; fails on type errors          |
-| `npm run typecheck`    | `tsc --noEmit`                                  |
-| `npm run lint`         | ESLint, including the local `spinnerly/*` rules |
-| `npm run format`       | Prettier write                                  |
-| `npm run format:check` | Prettier check                                  |
+That starts the Firestore emulator, seeds it with a wheel, and runs the dev
+server against it. **There is no setup step and no secret to obtain** — see
+below.
+
+| Command                | What                                             |
+| ---------------------- | ------------------------------------------------ |
+| `npm run dev:emulator` | Emulator + seed + dev server, one command        |
+| `npm run dev`          | Dev server only (expects an emulator already up) |
+| `npm run emulator`     | Emulator only, left running across restarts      |
+| `npm run seed`         | Reseed a running emulator                        |
+| `npm run build`        | Production build; fails on type errors           |
+| `npm run typecheck`    | `tsc --noEmit`                                   |
+| `npm run lint`         | ESLint, including the local `spinnerly/*` rules  |
+| `npm run test`         | Node test runner — the local ESLint rules        |
+| `npm run format`       | Prettier write                                   |
+| `npm run format:check` | Prettier check                                   |
 
 Next.js 16 with the App Router, React 19, Tailwind v4, TypeScript 6 in strict
 mode.
+
+### Local development runs on the emulator
+
+There is **no local Firebase project and no service account on your machine**
+(design doc decision 19). Local work runs entirely against the Firebase Emulator
+Suite; the cloud projects exist only for deployed environments.
+
+This is a credential-blast-radius decision. With `FIRESTORE_EMULATOR_HOST` set,
+the Admin SDK skips credential resolution entirely — there is nothing to
+authenticate against — so the service account private key lives in exactly one
+place, the Vercel dashboard, and never touches a laptop. It also makes the
+security rules unit-testable rather than pokeable-by-hand, which matters when
+`allow list: if false` is the entire security model.
+
+Everything the emulator needs is committed in `.env.development`, because none
+of it is a secret. `.env.example` documents the full set, including the
+deployed-only variables you will never need locally.
+
+- **The `demo-` project ID prefix is load-bearing.** The emulator treats
+  `demo-spinnerly` as strictly local and refuses to contact Google, so a
+  misconfigured client cannot reach a real project — and the client needs no
+  real API key. Do not "fix" the project ID in `.firebaserc`.
+- **Emulator data is discarded on exit.** `npm run seed` rebuilds the fixture in
+  about a second, which is why there is no exported snapshot in the repo. The
+  seeded wheel's share and edit URLs are printed when it runs.
+- The emulator UI is at <http://127.0.0.1:4001>. Not Firebase's default 4000 —
+  that port is commonly taken by other dev tooling, and the emulator treats the
+  clash as a hard startup failure rather than falling back.
+- `firebase-tools` is a pinned devDependency, not a global install, so CI gets
+  the same version. Run it via `npm run`, or `npx firebase` for anything else.
+- Security rules are not wired into `firebase.json` yet, so the emulator runs
+  open and says so on startup. TASK-6 adds `firestore.rules` and the
+  `@firebase/rules-unit-testing` suite.
+
+#### `firebase-tools` is pinned to 14.18.0, and that is a Java decision
+
+14.19.0 raised the emulator's Java floor from 11 to 21 —
+`MIN_SUPPORTED_JAVA_MAJOR_VERSION` in `lib/emulator/commandUtils.js`, enforced
+as a hard throw before any emulator starts. The
+[install-and-configure docs](https://firebase.google.com/docs/emulator-suite/install_and_configure)
+still say Java 11+, which was true until October 2025 and has been wrong since.
+
+14.18.0 is the last release that runs on a JDK 17, which is what this project
+targets. Bumping past it is not a version bump — it is a "everyone installs a
+new JDK, and CI grows a `setup-java` step" bump. Do it deliberately, together
+with TASK-6's rules-test job, not incidentally.
+
+### The two SDK modules
+
+The read/write split from the design doc is two modules, and each one is fenced
+off from the other side:
+
+| Module                   | SDK              | Guard                                                    |
+| ------------------------ | ---------------- | -------------------------------------------------------- |
+| `lib/firebase/admin.ts`  | `firebase-admin` | `server-only` — importing it client-side fails the build |
+| `lib/firebase/client.ts` | `firebase`       | `client-only` — importing it server-side fails the build |
+
+Both initialise lazily and cache on `globalThis`. That is not tidiness: `next
+dev` re-evaluates modules while the process lives on, so `initializeApp` at
+module scope throws "The default Firebase app already exists" on the second hot
+reload. The same cache is what lets a warm lambda reuse its gRPC channel.
+
+`lib/firebase/client.ts` exports a Firestore handle and nothing that writes, and
+`connectFirestoreEmulator` runs inside the same lazy init that creates the
+instance — it throws if it runs after any other call on that instance, so there
+must be no window in which a caller can obtain an unconnected handle.
+
+### The client has no write path, and it is linted
+
+`spinnerly/no-client-firestore-writes` errors on any write function imported
+from `firebase/firestore` — `setDoc`, `addDoc`, `updateDoc`, `deleteDoc`,
+`writeBatch`, `runTransaction`, and the `arrayUnion`/`increment`/
+`serverTimestamp` field transforms, which are the tell that a write is being
+assembled even when the call that sends it is elsewhere.
+
+The rule exists because the runtime symptom is uninformative rather than loud.
+A client write is denied at the rules layer, asynchronously, inside a promise
+nobody awaited — the UI just quietly stops updating. Lint turns that into a
+message naming the endpoint to use instead.
+
+Like the runtime rules it handles the forms a naive check misses: aliased
+imports (`updateDoc as touch`), namespace imports and their computed member
+access, destructuring off a namespace, a namespace laundered through a chain of
+local consts, `await import()` with no binding at all, `require()`, the internal
+`@firebase/firestore` spelling, and re-export barrels — both
+`export { setDoc } from …` and `export *`, which are the nastiest case because
+they put a write one import away while ensuring nothing downstream ever mentions
+`firebase/firestore` again.
 
 ### TypeScript is pinned to 6, deliberately
 
@@ -232,14 +334,21 @@ surprise:
 
 - `spinnerly/no-edge-runtime` — an exported `runtime = 'edge'` errors anywhere.
 - `spinnerly/require-nodejs-runtime` — every route segment under `app/api`, plus
-  any route segment importing `firebase-admin` directly, must declare
+  any route segment reaching the Admin SDK, must declare
   `export const runtime = 'nodejs'`.
+- `spinnerly/no-client-firestore-writes` — see
+  [The client has no write path](#the-client-has-no-write-path-and-it-is-linted).
 
 The second rule is scoped to **route segments** (`route.ts`, `page.tsx`,
 `opengraph-image.tsx`, …) because that is the only place Next.js reads the
-export — requiring it in `lib/firestore.ts` would be cargo cult, since the
-Admin SDK will live behind a wrapper that route handlers import rather than
-importing `firebase-admin` themselves.
+export — requiring it in `lib/firebase/admin.ts` would be cargo cult.
+
+"Reaching the Admin SDK" counts `lib/firebase/admin` as well as `firebase-admin`
+itself, and that distinction is load-bearing. The wrapper is the _intended_
+spelling, so a rule that only recognised the raw package would have exempted
+every segment that followed the convention — including `page.tsx` and
+`opengraph-image.tsx` under `app/w/[shareId]`, which are exactly the
+server-reading segments the design doc plans for.
 
 Both rules are defined in `eslint-rules/index.mjs` and covered by
 `eslint-rules/index.test.mjs` (`npm test`). The tests are not optional decoration:
