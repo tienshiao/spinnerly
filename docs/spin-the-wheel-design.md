@@ -1,7 +1,7 @@
 # Spin the Wheel — Design Doc
 
 **Status:** Draft
-**Last updated:** 2026-08-06
+**Last updated:** 2026-08-07
 
 ---
 
@@ -298,9 +298,9 @@ right place to revisit this, not a bolted-on boolean now.
 ```js
 {
   label: string,              // max 60 chars
-  status: "pending" | "accepted" | "rejected",
+  status: "pending" | "accepted",
   createdAt: timestamp,
-  clientHint: string          // coarse fingerprint for dedupe/rate limiting
+  expiresAt: timestamp        // TTL target; see §8
 }
 ```
 
@@ -308,12 +308,43 @@ Separate from the wheel doc because it has a different write policy and a
 different lifecycle. Accepting is a transaction: `arrayUnion` onto
 `wheels.options` plus a status flip, so a double-click can't duplicate an option.
 
-**No submitter attribution** (resolved). There is no author field and the UI
-shows no name. `clientHint` is a coarse fingerprint for dedupe and is never
-displayed. v1 has no identity anywhere, and inventing a display name only for
-suggestions would be the one exception — chat in phase 2 is the feature that
-genuinely wants stable per-user identity, and it should introduce it
-deliberately (§9) rather than have it arrive by accident here.
+`expiresAt` is on each suggestion because **a Firestore TTL policy deletes the
+document it matches and not that document's subcollections.** Without it, a
+reaped wheel leaves its whole queue behind — arbitrary user-submitted text with
+nothing left to reach it from, which is the indefinite ownership §8 exists to
+avoid. The policy has to cover the `suggestions` collection group as well as
+`wheels` and `wheelSecrets`.
+
+**No submitter attribution** (resolved). There is no author field, the UI shows
+no name, and **nothing identifying the submitter is stored at all.** v1 has no
+identity anywhere, and inventing a display name only for suggestions would be
+the one exception — chat in phase 2 is the feature that genuinely wants stable
+per-user identity, and it should introduce it deliberately (§9) rather than have
+it arrive by accident here.
+
+**Removed: `clientHint`** (resolved, 2026-08-07). This document previously
+specified a `clientHint` field — "a coarse fingerprint for dedupe/rate limiting"
+— which was implemented and then taken back out. Two reasons, in order of
+weight:
+
+1. **It contradicted decision 12 in practice.** §5 makes this subcollection
+   `allow get, list: if true`, and Firestore rules cannot exclude a field from a
+   read. So every participant holding the share URL could read every hint, group
+   the queue by it, and learn which suggestions came from the same person. That
+   is attribution by the back door, however coarse the value and whether or not
+   the UI ever displays it. "Never displayed" is a statement about our client,
+   not about who can read the document.
+2. **Nothing consumed it.** Rate limiting is deferred (decision 9) and would key
+   on the live address at request time rather than on stored hints; dedupe was
+   never built. So it was a fingerprint of real people carried for a feature
+   nobody had committed to, which is the opposite of what §8 asks.
+
+The cost of removing it is real and worth stating: a field can be populated at
+write time and cannot be backfilled, so a dedupe feature built later will be
+blind to every suggestion submitted before it. That is accepted. **If dedupe is
+built, the hint must live somewhere the public read cannot reach** — a document
+under `wheelSecrets`, which is `read, write: if false` — and not on the
+suggestion itself.
 
 **The queue is visible to participants** (resolved). Everyone with the share URL
 can see pending and accepted suggestions — it prevents duplicate submissions and

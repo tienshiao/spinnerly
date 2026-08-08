@@ -1,11 +1,11 @@
 ---
 id: TASK-9
 title: Implement POST /api/wheels — create a wheel
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:36'
-updated_date: '2026-08-08 01:47'
+updated_date: '2026-08-08 04:30'
 labels: []
 dependencies:
   - TASK-7
@@ -88,3 +88,9 @@ The reviewer independently confirmed the previous round's fixes hold, including 
 
 Unit suite 249 green, emulator 42 green, typecheck/lint/format clean, build succeeds.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+POST /api/wheels creates a wheel unauthenticated, minting the share ID and edit token and writing wheels/{shareId} plus wheelSecrets/{shareId} atomically in one batch — the raw token is returned in the response body and stored nowhere, only its SHA-256 hash. Adds lib/wheels/request.ts, whose readJsonObject is the transport layer every later write route reuses: an absent body means {} (one-click create sends nothing), a malformed one is 400 rather than 500, and the body is bounded at 64KB by a streaming byte counter rather than a caller-supplied content-length. Verified by 249 unit tests and 42 emulator tests, typecheck/lint/format clean, production build succeeds; two /code-review rounds found seven issues, all confirmed and fixed, the last independently verified with a raw socket proving a 200MB chunked body is refused after ~128KB rather than buffered.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -4,7 +4,7 @@ title: Build the Suggestions panel
 status: To Do
 assignee: []
 created_date: '2026-08-07 08:38'
-updated_date: '2026-08-07 08:52'
+updated_date: '2026-08-08 06:10'
 labels: []
 dependencies:
   - TASK-16
@@ -44,6 +44,12 @@ Participant variant also gets the submit row: a pill input placeholder Suggest a
 - [ ] #11 The suggestionsOpen toggle is present in the panel header for editors and absent for participants
 - [ ] #12 Toggling it takes effect for every connected client without a reload
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+clientHint no longer exists (TASK-12, 2026-08-07). The note above saying it 'exists for dedupe only and is never displayed' is out of date: the field was removed and design doc section 4 amended, because section 5 makes the suggestions subcollection publicly readable and rules cannot exclude a field — so storing it handed every participant a per-submitter correlator, which is decision 12's attribution by the back door. Decision 12 itself is unchanged and still binding on this panel: no submitter name, no by-line, nothing identifying who sent what. There is simply no field to not display.
+<!-- SECTION:NOTES:END -->
 
 ## Comments
 

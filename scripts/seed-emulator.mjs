@@ -88,9 +88,15 @@ await wheel.set({
 
 // Only ever `pending` or `accepted` — reject is a hard delete (design doc
 // decision 11), so there is no rejected row to seed.
+//
+// The IDs follow the same 20-character rule as SHARE_ID above, and for the same
+// reason: `isSuggestionId` guards a document path, so a readable ID like
+// `seed-suggestion-1` reads fine here and then 404s on every accept and reject
+// against the seeded data — leaving the editor UI unable to curate the one
+// queue this fixture exists to give it.
 const suggestions = [
-  { id: 'seed-suggestion-1', label: 'Korean BBQ', status: 'pending' },
-  { id: 'seed-suggestion-2', label: 'The bahn mi cart', status: 'pending' },
+  { id: 'seedsuggestion000001', label: 'Korean BBQ', status: 'pending' },
+  { id: 'seedsuggestion000002', label: 'The bahn mi cart', status: 'pending' },
 ]
 
 await Promise.all(
@@ -99,7 +105,10 @@ await Promise.all(
       label,
       status,
       createdAt: now,
-      clientHint: 'seed',
+      // Its own copy, because a TTL policy deletes the document it matches and
+      // not that document's subcollections. Seeded so the fixture matches what
+      // the submit route writes and what TASK-14's policy has to act on.
+      expiresAt,
     }),
   ),
 )
