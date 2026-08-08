@@ -120,30 +120,35 @@ describe('POST /api/wheels', () => {
     expect(wheel.get('updatedAt')).toBeTruthy()
   })
 
-  it('sets expiresAt 30 days out, on the wheel and on its secret', async () => {
+  it('sets the wheel to expire 30 days out', async () => {
     const before = Date.now()
     const { shareId } = await create()
     const after = Date.now()
+
+    const wheel = await db.collection(WHEELS).doc(shareId).get()
+    const expiresAt = wheel.get('expiresAt').toDate().getTime()
+
+    expect(expiresAt).toBeGreaterThanOrEqual(before + THIRTY_DAYS_MS)
+    expect(expiresAt).toBeLessThanOrEqual(after + THIRTY_DAYS_MS)
+  })
+
+  it('sets the secret to outlive the wheel', async () => {
+    // Not the same instant, deliberately. The two are reaped by independent
+    // per-collection TTL jobs with no ordering guarantee between them, and one
+    // order is harmless while the other leaves a live, publicly writable wheel
+    // whose owner has permanently lost the kill switch. See
+    // SECRET_EXPIRY_MARGIN_DAYS.
+    const { shareId } = await create()
 
     const [wheel, secret] = await Promise.all([
       db.collection(WHEELS).doc(shareId).get(),
       db.collection(WHEEL_SECRETS).doc(shareId).get(),
     ])
 
-    for (const [name, snapshot] of [
-      ['wheel', wheel],
-      ['secret', secret],
-    ] as const) {
-      const expiresAt = snapshot.get('expiresAt').toDate().getTime()
-      expect(
-        expiresAt,
-        `the ${name} expires before 30 days from creation`,
-      ).toBeGreaterThanOrEqual(before + THIRTY_DAYS_MS)
-      expect(
-        expiresAt,
-        `the ${name} expires after 30 days from creation`,
-      ).toBeLessThanOrEqual(after + THIRTY_DAYS_MS)
-    }
+    expect(
+      secret.get('expiresAt').toDate().getTime(),
+      'the secret is reapable before the wheel it unlocks',
+    ).toBeGreaterThan(wheel.get('expiresAt').toDate().getTime())
   })
 
   it.each([
