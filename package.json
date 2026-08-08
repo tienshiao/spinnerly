@@ -12,6 +12,7 @@
     "seed": "node --env-file=.env.development --env-file-if-exists=.env.local scripts/seed-emulator.mjs",
     "ttl:configure": "node scripts/configure-ttl.mjs",
     "ttl:check": "node scripts/configure-ttl.mjs --check",
+    "rules:deploy": "firebase deploy --only firestore:rules",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
@@ -42,6 +43,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22.20.1",
     "@types/react": "^19",

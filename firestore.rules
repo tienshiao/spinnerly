@@ -1,0 +1,74 @@
+// Spinnerly Firestore security rules — design doc section 5.
+//
+// This file is a READ POLICY and nothing else. Every client write is denied
+// here, unconditionally and without exception, because the browser has no write
+// path at all: writes go to the route handlers under /api, which use the Admin
+// SDK and bypass rules entirely (design doc section 3). There is no signed-in
+// user to write a condition against — the app has no accounts — so a rule that
+// tried to authorise a write would have nothing to authorise it on.
+//
+// Deploy:  npx firebase deploy --only firestore:rules --project <projectId>
+// Test:    npm run test:emulator   (firestore.rules.emulator.test.ts)
+
+// Under v2 a collection group query is authorised ONLY by a rule written with
+// the recursive-wildcard prefix — `/{path=**}/suggestions/{id}` — and a rule at
+// a fixed path, like the `suggestions` one below, does not authorise one. So
+// there is deliberately no clause here denying collection group access: the
+// denial is the absence of such a rule, and the only way to state a denial by
+// absence is a test. firestore.rules.emulator.test.ts holds it.
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /wheels/{shareId} {
+      // Public read by ID. The share URL is the capability: anyone holding it
+      // may read the wheel, and holding it is the only way to name one.
+      allow get: if true;
+
+      // ← load-bearing. Rules are not filters. With `list` permitted, any
+      // client could call getDocs(collection(db, 'wheels')) and walk the whole
+      // collection, share IDs included — at which point the unguessable ID
+      // secures nothing and every wheel in existence is enumerable, along with
+      // every editable one. This single line is the security model.
+      allow list: if false;
+
+      // `write` covers create, update and delete together.
+      allow write: if false;
+
+      match /suggestions/{suggestionId} {
+        // `list` IS permitted here, unlike on wheels, and the difference is
+        // the parent path: listing this collection requires already knowing
+        // the shareId, so it grants nothing the share URL did not. The
+        // participant UI lists it directly (design doc section 3).
+        allow get, list: if true;
+        allow write: if false;
+      }
+
+      // Phase 2 (design doc section 9). Nothing writes a spin yet; the rule
+      // exists now so the collection is never briefly readable-and-writable
+      // in the change that starts writing them.
+      match /spins/{spinId} {
+        allow get, list: if true;
+        allow write: if false;
+      }
+    }
+
+    // Never readable by any client, in any way. This holds the SHA-256 of each
+    // wheel's edit token; only the Admin SDK, which does not evaluate rules,
+    // ever reads it (lib/wheels/store.ts). Denying reads is redundant with the
+    // default-deny floor below and is written out anyway, because "the secrets
+    // are unreachable" should be a statement in this file rather than an
+    // inference from the absence of one.
+    match /wheelSecrets/{shareId} {
+      allow read, write: if false;
+    }
+
+    // Anything not matched above is denied by default — Firestore's own floor,
+    // not something this file has to state. Do not add a catch-all
+    // `match /{document=**}` clause "for completeness": a recursive wildcard
+    // here would also start authorising collection group queries on every
+    // subcollection in the database, which is precisely what the fixed paths
+    // above are relied upon not to do.
+  }
+}

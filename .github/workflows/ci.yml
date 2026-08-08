@@ -1,0 +1,87 @@
+# The repository's first CI job, added with the security rules because the
+# rules tests are the first thing here that is worth nothing if it only ever
+# runs on the machine that wrote it (TASK-6, and TASK-5's note handing this
+# over). A rules edit that opens a read or a write is invisible in review.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+# `main` is excluded from cancellation because its runs are the record of
+# whether a commit was ever green.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Matches the `engines.node` floor in package.json.
+          node-version: 22
+          cache: npm
+
+      # The Firestore emulator is a Java process. This step and the
+      # firebase-tools version in package.json are a matched pair and have to
+      # move together: 14.18.0 requires Java 11+, and 14.19.0 raised that floor
+      # to 21 (MIN_SUPPORTED_JAVA_MAJOR_VERSION, a hard throw before any
+      # emulator starts). 17 is what the dev machine runs, so a failure here
+      # cannot be a version skew between CI and local. Bumping firebase-tools
+      # past 14.18.0 means bumping this line in the same commit.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # The emulator JAR is ~60MB and is downloaded on first use, outside npm's
+      # cache. Keyed on the firebase-tools version specifically, not on the
+      # lockfile hash: which JAR gets fetched depends on that one version, so a
+      # lockfile key would write a fresh 60MB entry for every unrelated
+      # dependency bump.
+      - id: firebase-tools-version
+        run: |
+          echo "value=$(node -p "require('./package.json').devDependencies['firebase-tools']")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}-${{ steps.firebase-tools-version.outputs.value }}
+
+      - run: npm ci
+
+      # `tsc` has to run after this and cannot run before it. Next generates the
+      # RouteContext, LayoutProps and PageProps globals into .next/types, and
+      # writes next-env.d.ts that references them — both gitignored, so on a
+      # fresh checkout neither exists and tsconfig's `.next/types/**/*.ts`
+      # include matches nothing. Without this step `npm run typecheck` fails
+      # with ~28 "Cannot find name 'RouteContext'" errors that look like a
+      # tsconfig problem and are not. `npm run build` also generates them, but
+      # it runs after the cheap checks by design, which is five steps too late.
+      - run: npx next typegen
+
+      # Cheapest first, so a misformatted file does not cost an emulator start.
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+      # Deliberately no NEXT_PUBLIC_FIREBASE_* here. A production build does not
+      # load .env.development (Next only reads it in development), and it does
+      # not need to: nothing is evaluated at build time that reaches the client
+      # SDK. If this step ever starts failing on a missing public variable, that
+      # is a real change in when the config is read — fix that rather than
+      # pasting the demo values in, which would make CI pass while a deploy with
+      # no config set still broke.
+      - run: npm run build
+
+      # Starts the Firestore emulator around the suite, including
+      # firestore.rules.emulator.test.ts, which loads firestore.rules off disk.
+      - run: npm run test:emulator

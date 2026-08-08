@@ -434,6 +434,10 @@ service cloud.firestore {
 }
 ```
 
+Shipped as `firestore.rules`, which is this policy plus the reasoning in
+comments. That file is the artifact — it is what deploys and what the tests
+load; this block is the spec it has to keep matching.
+
 ### `allow list: if false` is the whole security model
 
 Public read does **not** mean "readable if you know the ID." Rules are not
@@ -441,9 +445,51 @@ filters. With `list` permitted, anyone can call
 `getDocs(collection(db, 'wheels'))` and walk the entire collection, secret IDs
 included. Denying `list` is what makes the unguessable ID an actual secret.
 
-Same applies to collection-group queries — verify that
-`collectionGroup('suggestions')` cannot reach subcollection data from outside a
-known parent path.
+### Collection-group queries are denied by absence (resolved)
+
+The subcollection rules permit `list`, which is only safe because reaching them
+requires already naming a `shareId` — the listing grants nothing the share URL
+did not. A collection-group query has no parent path at all: it reaches every
+`suggestions` collection under every wheel at once, and if it were permitted it
+would be the enumeration hole `allow list: if false` exists to close, one level
+down.
+
+It is not permitted, and the reason is worth stating because there is no line
+in the file that says so. Under `rules_version = '2'`, a collection-group query
+is authorised **only** by a rule written with a recursive-wildcard prefix —
+`match /{path=**}/suggestions/{id}` — and a rule at a fixed path, which is what
+`match /wheels/{shareId}/suggestions/{suggestionId}` is, does not authorise one.
+There is no such rule, so the query is denied.
+
+Two consequences for anyone editing `firestore.rules`:
+
+- **Do not add a catch-all `match /{document=**}` clause "for completeness."**
+  A recursive wildcard anywhere in the file starts authorising collection-group
+  queries for everything beneath it, and would revoke this guarantee silently —
+  no error, no failing read, just a database that can now be enumerated.
+- The guarantee holds because of a line nobody wrote, so it cannot be reviewed
+  by reading the file. It is asserted instead, for both `suggestions` and
+  `spins`, in `firestore.rules.emulator.test.ts`.
+
+### Deploying and testing the rules
+
+The rules live in `firestore.rules` and are wired into `firebase.json`, so the
+emulator loads them too — a local browser is governed by the same policy a
+deployed one is, and `npm run test:emulator` runs the suite that reads that file
+off disk and asserts every clause in it.
+
+Deploy is one command per environment, and it is not part of the Vercel deploy:
+
+```bash
+npm run rules:deploy -- --project <projectId>
+```
+
+Rules and application code ship separately, so an ordering exists and only one
+order is safe. **Deploy rules before the code that depends on them.** A client
+reading a path the deployed rules do not yet permit fails with
+`permission-denied`, which surfaces as a wheel page that renders and then stays
+empty. The reverse — rules that permit more than any client currently reads —
+is inert.
 
 ---
 
