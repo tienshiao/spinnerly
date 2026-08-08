@@ -1,11 +1,11 @@
 ---
 id: TASK-8
 title: Define shared validation limits and input sanitisation
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:36'
-updated_date: '2026-08-08 00:22'
+updated_date: '2026-08-08 04:45'
 labels: []
 dependencies:
   - TASK-7
@@ -32,11 +32,11 @@ Also: trim and normalise whitespace, reject empty labels after trimming, reject 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A single module exports all caps and every write route imports them
+- [x] #1 A single module exports all caps and every write route imports them
 - [x] #2 Labels are trimmed and rejected when empty after trimming
 - [x] #3 Over-length labels are rejected with 400 and a message naming the limit
-- [ ] #4 Adding an option to a wheel already at the cap returns 409 with a distinguishable error code
-- [ ] #5 Submitting a suggestion to a wheel at the pending cap returns 409 with a distinguishable error code
+- [x] #4 Adding an option to a wheel already at the cap returns 409 with a distinguishable error code
+- [x] #5 Submitting a suggestion to a wheel at the pending cap returns 409 with a distinguishable error code
 - [x] #6 Tests cover the boundary at and one past each cap
 <!-- AC:END -->
 
@@ -84,6 +84,14 @@ Post-review revisions (/code-review found five issues, all confirmed and all fix
 Also folded the growing positional parameter list into a TextField descriptor, which fixed a real inconsistency: the new size guard had been reporting a bare 'too_long' rather than the field's own label_too_long/title_too_long code.
 
 Suite is 200 green (up from 167); typecheck, lint and format:check clean.
+
+Closed by TASK-12, which supplied the last route the three open criteria were waiting on.
+
+- AC 1 — all seven route files under app/api import from lib/wheels/validation.ts, and no route restates a limit: a grep for the cap values across app/api/**/route.ts finds nothing but HTTP status codes.
+- AC 4 — POST /wheels/{shareId}/options answers 409 options_full at the cap, checked inside the transaction that writes. Covered in app/api/wheels/[shareId]/options/route.emulator.test.ts at the cap, one past it, and with two adds racing for the last free slot. POST /suggestions/{id}/accept reaches the same assertion by a second path and answers the same code, with the suggestion left pending.
+- AC 5 — POST /wheels/{shareId}/suggestions answers 409 suggestions_full at PENDING_SUGGESTIONS_MAX, counting pending rows only, so a wheel that has been curated properly keeps taking suggestions.
+
+Both bulk-form callers of assertOptionCapacity(current, adding) now exist as intended — POST /wheels seeds an initial list and TASK-13's duplicate will copy an array — and validateSuggestionLabel has its caller. The reason it shares OPTION_LABEL_MAX turned out to matter in TASK-12: acceptSuggestion deliberately does not re-validate the stored label, because a rejection there would land in front of an editor who cannot fix an input that is neither theirs nor mutable.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -105,3 +113,9 @@ Close these as TASK-9, TASK-11 and TASK-12 land and each route is confirmed to i
 Note for whoever picks those up: assertOptionCapacity's 'adding' parameter is the one to reach for in POST /wheels and in duplicate. Checking capacity one option at a time against a count of zero passes and then writes past the cap.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+lib/wheels/validation.ts is the single source of every input cap and validator, imported by all seven write routes and by nothing that restates a limit. Counts characters in Unicode code points after NFC — not UTF-16 units, which halve the cap for emoji, and not grapheme clusters, which are unbounded — normalises whitespace rather than rejecting it, and requires one visible character so a label of word joiners or Hangul fillers cannot render as a blank wheel segment. ValidationError carries the status and code clients branch on and is thrown rather than returned, so forgetting to catch it yields a 500 and no write. Verified by the module's own it.each tables at and one past every cap, and end-to-end by the route suites: 409 options_full at OPTIONS_MAX from both the add and the accept path, 409 suggestions_full at PENDING_SUGGESTIONS_MAX on submit.
+<!-- SECTION:FINAL_SUMMARY:END -->

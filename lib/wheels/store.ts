@@ -5,7 +5,11 @@ import { randomUUID } from 'node:crypto'
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 
 import { getAdminDb } from '@/lib/firebase/admin'
-import { assertOptionCapacity, ValidationError } from './validation'
+import {
+  assertOptionCapacity,
+  assertPendingSuggestionCapacity,
+  ValidationError,
+} from './validation'
 import {
   editTokenMatches,
   hashEditToken,
@@ -28,6 +32,9 @@ import {
 
 export const WHEELS = 'wheels'
 export const WHEEL_SECRETS = 'wheelSecrets'
+
+/** The suggestions subcollection of a wheel. `wheels/{shareId}/suggestions`. */
+export const SUGGESTIONS = 'suggestions'
 
 /** Days a wheel lives without activity. Design doc section 8. */
 const EXPIRY_DAYS = 30
@@ -71,10 +78,29 @@ const SECRET_EXPIRY_MARGIN_DAYS = 2
  * the route means to check. Design doc section 6's rule that a caller "must
  * never be able to name which secret document is checked" is precisely this,
  * and it is not enforced by anything else in the stack.
+ *
+ * Shared with `isSuggestionId` below, which is the same shape for the same
+ * reason — every ID this codebase puts in a path is one Firestore minted.
  */
 const SHARE_ID = /^[A-Za-z0-9]{20}$/
 
 export function isShareId(value: unknown): value is string {
+  return typeof value === 'string' && SHARE_ID.test(value)
+}
+
+/**
+ * Whether `value` can name a suggestion document.
+ *
+ * The same shape and, more to the point, the same argument: a suggestion ID is
+ * taken from the request path and reaches
+ * `wheels/{shareId}/suggestions/{suggestionId}`, so an unvalidated one is a
+ * path-traversal primitive exactly as `shareId` is. `../..` walks back out of
+ * the subcollection and names a document on another wheel entirely.
+ *
+ * This is what separates it from `optionId`, which never reaches a path — see
+ * `OPTION_ID_MAX` for why that one is a bound rather than a boundary.
+ */
+export function isSuggestionId(value: unknown): value is string {
   return typeof value === 'string' && SHARE_ID.test(value)
 }
 
@@ -649,6 +675,356 @@ export async function removeOption(
   await commit(() => batch.commit(), 'removeOption', shareId)
 
   return doomed !== undefined
+}
+
+/**
+ * The status of a suggestion. Two values, and never a third.
+ *
+ * There is deliberately no `"rejected"`. Design doc section 4 makes reject a
+ * hard delete because the queue is visible to every participant, so a rejected
+ * row would leave spam and abuse on display until someone built a filter. The
+ * type is the first statement of that; `rejectSuggestion` deleting rather than
+ * flipping is the second.
+ */
+export type SuggestionStatus = 'pending' | 'accepted'
+
+/** A suggestion as `submitSuggestion` returns it. */
+export type CreatedSuggestion = {
+  id: string
+  label: string
+  status: SuggestionStatus
+}
+
+function assertSuggestionId(suggestionId: string): void {
+  // 404 rather than 400, for the reason `assertEditor` gives about `shareId`:
+  // an ID that cannot be a Firestore auto-ID cannot name a suggestion that
+  // exists, and answering differently would tell someone probing the queue
+  // which of their guesses were at least well formed.
+  if (!isSuggestionId(suggestionId)) {
+    throw new ValidationError(
+      404,
+      'no_such_suggestion',
+      'No suggestion with that ID.',
+    )
+  }
+}
+
+/**
+ * Add a pending suggestion to a wheel and slide its expiry forward.
+ *
+ * **This is the only unauthenticated write in the application.** Anyone holding
+ * the share URL may call it (design doc section 2), which makes it a billing
+ * surface as much as a correctness one — and with rate limiting deferred out of
+ * v1 for want of a Redis (design doc section 7), the pending cap enforced here
+ * is the only thing bounding what a single scraped share URL can cost.
+ *
+ * **Not a transaction, unlike `addOption`, and the asymmetry is deliberate.**
+ * The two caps look alike and are not:
+ *
+ *  - `OPTIONS_MAX` bounds a single document against Firestore's 1MB limit, so
+ *    exceeding it is a rejected write surfacing as a 500. It has to be exact,
+ *    which is why `addOption` pays for a transaction and the contention that
+ *    comes with it.
+ *  - `PENDING_SUGGESTIONS_MAX` bounds a subcollection, where no document grows
+ *    at all. It is an abuse ceiling, and a race that lands 201 suggestions
+ *    instead of 200 has cost us one extra document.
+ *
+ * Paying for exactness here would mean serialising every submission to a wheel
+ * through one lock — on the one endpoint an attacker can call without a
+ * credential. That turns a burst of spam into a queue of retrying transactions,
+ * each of which is billed, which is a worse answer to abuse than the cap it
+ * would be enforcing.
+ */
+export async function submitSuggestion(
+  shareId: string,
+  input: { label: string },
+  db: Firestore = getAdminDb(),
+): Promise<CreatedSuggestion> {
+  // `EditorAuthError` despite there being no editor here. The class is "an
+  // error carrying the status and code a route should answer with"; its name
+  // reflects where it lives rather than this call site, and using it keeps
+  // `no_such_wheel` coming from one place across all five write paths.
+  if (!isShareId(shareId)) {
+    throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  }
+
+  const wheelRef = db.collection(WHEELS).doc(shareId)
+  const snapshot = await wheelRef.get()
+  if (!snapshot.exists) {
+    throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  }
+
+  // `=== true` rather than a truthiness test, so a wheel whose document is
+  // missing the field or holding the wrong type is treated as closed. Failing
+  // closed is the safe direction on the unauthenticated path: the cost is that
+  // participants cannot suggest to a malformed wheel, against accepting public
+  // writes to a wheel whose kill switch we were unable to read.
+  if (snapshot.get('suggestionsOpen') !== true) {
+    throw new ValidationError(
+      403,
+      'suggestions_closed',
+      'This wheel is not taking suggestions right now.',
+    )
+  }
+
+  const suggestions = wheelRef.collection(SUGGESTIONS)
+
+  // A count aggregation rather than fetching the documents: it bills a fraction
+  // of a read regardless of how many rows it counts, where reading 200
+  // suggestions to discover there are 200 of them would bill 200.
+  const pending = await suggestions
+    .where('status', '==', 'pending')
+    .count()
+    .get()
+  assertPendingSuggestionCapacity(pending.data().count)
+
+  const suggestionRef = suggestions.doc()
+  const slide = slidingExpiry()
+
+  const batch = db.batch()
+  batch.set(suggestionRef, {
+    label: input.label,
+    status: 'pending' satisfies SuggestionStatus,
+    // A real server timestamp, unlike an option's `addedAt`, because this one
+    // is a top-level field rather than an array element and so may hold the
+    // sentinel. It is also the field the queue is ordered by across clients,
+    // which a submitter's own clock could not be trusted to supply.
+    createdAt: FieldValue.serverTimestamp(),
+    // There is deliberately no `clientHint`, though design doc section 4's data
+    // model lists one. Rules cannot exclude a field, and section 5 makes this
+    // subcollection `allow get, list: if true` — so a per-submitter fingerprint
+    // stored here is readable by every participant holding the share URL, who
+    // could group the queue by it and learn which suggestions came from the
+    // same person. That is attribution in all but the name, and decision 12
+    // resolves against attribution in v1.
+    //
+    // Nothing read the field either, so it was a fingerprint of real people
+    // carried for a feature nobody has committed to building — the opposite of
+    // what section 8 asks of us. Dedupe can start collecting when someone
+    // builds it, against rules that were written with it in mind.
+
+    // Its own copy of the wheel's expiry, because a Firestore TTL policy
+    // deletes the document it matches and NOT that document's subcollections.
+    // Without this field a reaped wheel would leave its suggestions behind
+    // forever — arbitrary user-submitted text with no wheel to reach it from,
+    // which is precisely the indefinite ownership design doc section 8 exists
+    // to avoid.
+    //
+    // Set equal to the wheel's expiry AT SUBMIT TIME, and never slid
+    // afterwards. That is the cheap half of a decision TASK-14 has to finish,
+    // and the cost is real rather than notional: the wheel's expiry moves
+    // forward on every write, this one does not, so on a wheel still in use
+    // after 30 days the TTL policy deletes pending suggestions out of a live
+    // queue that participants can see, and accepted ones out from under the
+    // `fromSuggestion` provenance pointing at them.
+    //
+    // Not fixed here because the fix is a fan-out — sliding up to 200
+    // subcollection documents on every edit — and choosing between that, a
+    // collection-group sweep and simply accepting the loss is the TTL design
+    // TASK-14 owns. What is settled is the direction: a suggestion must not
+    // outlive its wheel, because that is the orphan above and it is
+    // unrecoverable, whereas one reaped early is a row on a wheel nobody has
+    // touched in a month.
+    //
+    // TASK-14 owns the policy itself and must configure it on the `suggestions`
+    // collection group as well as on `wheels` and `wheelSecrets`. This field is
+    // written now because a TTL field is trivial at write time and impossible to
+    // backfill onto rows already stored.
+    expiresAt: slide.wheel.expiresAt,
+  })
+  batch.update(wheelRef, slide.wheel)
+  batch.update(db.collection(WHEEL_SECRETS).doc(shareId), slide.secret)
+
+  await commit(() => batch.commit(), 'submitSuggestion', shareId)
+
+  return {
+    id: suggestionRef.id,
+    label: input.label,
+    status: 'pending',
+  }
+}
+
+/**
+ * Accept a pending suggestion onto the wheel, in one transaction.
+ *
+ * Every caller must have passed `assertEditor` first.
+ *
+ * Returns the option this call created, or `null` when the suggestion had
+ * already been accepted and nothing was written. That second case is what makes
+ * a double-click safe, and design doc section 4 names it as the reason accepting
+ * is a transaction at all: the `arrayUnion` onto `options` and the status flip
+ * have to be one atomic step, or two clicks racing each other both read
+ * `pending` and both append.
+ *
+ * **The status flip is this operation's idempotency key, and it is the only
+ * thing making it idempotent.** That is worth stating plainly because
+ * `addOption` next door works the other way round and the difference is easy to
+ * misread. There, the option element is built outside the transaction so that
+ * `arrayUnion` re-appending an identical value is a no-op, and a separate guard
+ * keeps the capacity check from misfiring on a retry that already committed.
+ *
+ * Here the element cannot be built outside: its label comes from the
+ * suggestion, which is read inside. So every retry mints a fresh id, and
+ * nothing about the append is self-deduplicating. What makes a retry safe is
+ * the `status === 'accepted'` branch below — a re-run re-reads the suggestion,
+ * sees the flip its own previous attempt committed, and returns before building
+ * anything at all.
+ *
+ * The consequence for anyone changing this: relaxing that branch, or checking
+ * the wheel's options instead of the suggestion's status, reintroduces exactly
+ * the duplicate the transaction exists to prevent. It is not the transaction
+ * alone that holds design doc section 4's "a double-click can't duplicate an
+ * option" — it is the transaction plus that early return.
+ */
+export async function acceptSuggestion(
+  shareId: string,
+  suggestionId: string,
+  db: Firestore = getAdminDb(),
+): Promise<StoredOption | null> {
+  if (!isShareId(shareId)) {
+    throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  }
+  assertSuggestionId(suggestionId)
+
+  const wheelRef = db.collection(WHEELS).doc(shareId)
+  const secretRef = db.collection(WHEEL_SECRETS).doc(shareId)
+  const suggestionRef = wheelRef.collection(SUGGESTIONS).doc(suggestionId)
+
+  let created: StoredOption | null = null
+
+  await commit(
+    () =>
+      db.runTransaction(async (transaction) => {
+        // Reset per attempt. A retry that finds the suggestion already accepted
+        // must not report the option a previous attempt believed it was making.
+        created = null
+
+        // `getAll` rather than two awaited gets: one round trip, and Firestore
+        // requires every read in a transaction to precede every write, which is
+        // easier to keep true when the reads are one call.
+        const [wheel, suggestion] = await transaction.getAll(
+          wheelRef,
+          suggestionRef,
+        )
+
+        if (!wheel.exists) {
+          // As in `addOption`: the caller has passed `assertEditor`, so the
+          // secret was there a moment ago and a missing wheel is the pair
+          // having come apart rather than an unknown wheel.
+          throw pairSplit(
+            'acceptSuggestion',
+            `wheels/${shareId} is missing but its secret is not`,
+          )
+        }
+
+        if (!suggestion.exists) {
+          throw new ValidationError(
+            404,
+            'no_such_suggestion',
+            'That suggestion is no longer there. Someone may have rejected it already.',
+          )
+        }
+
+        const status: unknown = suggestion.get('status')
+
+        // The idempotent path. No writes at all, not even the expiry slide —
+        // a second click is not activity, and sliding on it would make a
+        // wheel's lifetime depend on how many times its editor tapped.
+        if (status === 'accepted') return
+
+        if (status !== 'pending') {
+          // Unreachable through this API: nothing writes a third status, and
+          // reject deletes rather than flipping (design doc section 4). Named
+          // rather than left to fall through and be accepted, so a row that got
+          // into a state we do not define is refused instead of copied onto the
+          // wheel.
+          throw new ValidationError(
+            409,
+            'suggestion_not_pending',
+            'That suggestion cannot be accepted.',
+          )
+        }
+
+        const label: unknown = suggestion.get('label')
+        if (typeof label !== 'string') {
+          // Our own data being wrong, not the request. A 500 is the honest
+          // answer; there is nothing the editor could change to make this work.
+          throw new Error(
+            `${SUGGESTIONS}/${suggestionId} on wheels/${shareId} has no label.`,
+          )
+        }
+
+        // Deliberately NOT re-validated. `validateSuggestionLabel` held this
+        // string to the option rules when it was submitted, which is the whole
+        // reason those two validators share a cap — see the note on it in
+        // ./validation.ts. Re-running the check here could only ever fail in
+        // front of an editor who has no way to fix the input, since the label
+        // is not theirs and is immutable (decision 10).
+        const option = optionElement({ label, fromSuggestion: suggestionId })
+
+        assertOptionCapacity(storedOptions(wheel.data()).length)
+
+        const slide = slidingExpiry()
+        transaction.update(wheelRef, {
+          options: FieldValue.arrayUnion(option),
+          ...slide.wheel,
+        })
+        transaction.update(secretRef, slide.secret)
+        transaction.update(suggestionRef, {
+          status: 'accepted' satisfies SuggestionStatus,
+        })
+
+        created = option
+      }),
+    'acceptSuggestion',
+    shareId,
+  )
+
+  return created
+}
+
+/**
+ * Reject a suggestion by deleting it, and slide the wheel's expiry forward.
+ *
+ * Every caller must have passed `assertEditor` first.
+ *
+ * A hard delete rather than a status flip, per design doc section 4: the queue
+ * is visible to every participant, so a `rejected` row would leave whatever was
+ * submitted on display to everyone until someone built a filter for it. On a
+ * wheel being brigaded, that is the entire problem rather than a detail of it.
+ *
+ * Idempotent, and costs one write with no read. `delete` on a document that is
+ * not there succeeds, so a client is safe to retry a DELETE whose response it
+ * never saw — the same property, for the same reason, as `removeOption`.
+ *
+ * An accepted suggestion may be deleted too. The option it produced keeps a
+ * `fromSuggestion` pointing at a document that is gone, which costs nothing:
+ * the field is provenance and nothing dereferences it. Refusing would leave an
+ * editor unable to clear an accepted row out of a public queue, which is the
+ * housekeeping this endpoint is for.
+ */
+export async function rejectSuggestion(
+  shareId: string,
+  suggestionId: string,
+  db: Firestore = getAdminDb(),
+): Promise<void> {
+  if (!isShareId(shareId)) {
+    throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  }
+  assertSuggestionId(suggestionId)
+
+  const wheelRef = db.collection(WHEELS).doc(shareId)
+  const slide = slidingExpiry()
+
+  const batch = db.batch()
+  batch.delete(wheelRef.collection(SUGGESTIONS).doc(suggestionId))
+  // The wheel is not read first: `update` on a document that is not there fails
+  // NOT_FOUND, which `commit` turns into the 404 a missing wheel deserves. One
+  // round trip instead of two, and the delete cannot land without it.
+  batch.update(wheelRef, slide.wheel)
+  batch.update(db.collection(WHEEL_SECRETS).doc(shareId), slide.secret)
+
+  await commit(() => batch.commit(), 'rejectSuggestion', shareId)
 }
 
 /** Whether a Firestore error is NOT_FOUND (gRPC status 5). */
