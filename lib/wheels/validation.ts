@@ -65,8 +65,19 @@ export class ValidationError extends Error {
   readonly status: number
   readonly code: string
 
-  constructor(status: number, code: string, message: string) {
-    super(message)
+  /**
+   * `options` carries a `cause` where one exists. The response is deliberately
+   * uninformative — a caller learns the code and nothing about what went wrong
+   * underneath — so an underlying error that is not attached here is lost
+   * entirely rather than merely hidden from the client.
+   */
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
     this.name = 'ValidationError'
     this.status = status
     this.code = code

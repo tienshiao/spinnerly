@@ -135,6 +135,55 @@ Route handlers call `assertEditor`, which throws `EditorAuthError` — deliberat
 throwing rather than returning a result, so that forgetting to check it produces
 a 500 and no write, rather than an unauthorised write.
 
+### Validating a request body
+
+Three layers, and every write route uses all three the same way. Put a new check
+in the layer that owns it rather than wherever it is convenient.
+
+| Layer     | Owns                                      | Lives in                   |
+| --------- | ----------------------------------------- | -------------------------- |
+| Transport | body size, JSON syntax, "is it an object" | `lib/wheels/request.ts`    |
+| Shape     | which fields exist, what type each is     | a Zod schema in the route  |
+| Domain    | the caps, sanitisation, capacity          | `lib/wheels/validation.ts` |
+
+A route reads:
+
+```ts
+const CreateWheelBody = z.object({
+  title: z.unknown().optional().transform(domainCheck(validateNewWheelTitle)),
+})
+
+const { title } = await parseBody(request, CreateWheelBody)
+```
+
+`parseBody` reads the body and runs the schema, raising **one** `ValidationError`
+whichever layer refused — so a handler has a single `catch`, not three shapes of
+failure.
+
+Four things about this that are not obvious:
+
+- **Fields are `z.unknown()`, not `z.string()`.** The type check belongs to the
+  validator that reports it. A `z.string()` in the schema would put "what may a
+  title be" in two places, and Zod's message would replace ours.
+- **`domainCheck` carries our error code through Zod.** Clients branch on `code`
+  (`title_too_long`, `options_full`), which are facts about this application and
+  have no Zod equivalent. The domain error rides on the issue's `params` and is
+  unpacked by `parseBody`. A Zod-native issue — wrong type on a `z.boolean()`,
+  say — becomes a 400 `invalid_body` carrying Zod's own message.
+- **`.optional()` before `.transform()` still runs the transform** when the key
+  is absent, which is what lets `validateNewWheelTitle` see its `undefined` and
+  apply the default. Without it, an absent key is rejected before the validator
+  is consulted and one-click creation breaks.
+- **Absent and explicitly-`undefined` stay distinguishable.** Zod 4 leaves the
+  key off the output for an absent field and present for `{ title: undefined }`,
+  so a PATCH can tell "don't touch the title" from "set it to nothing" with
+  `'title' in body`. Do not collapse the two — that distinction is what stops the
+  suggestions kill switch from silently renaming a wheel.
+
+Caps and sanitisation stay in `lib/wheels/validation.ts` and are never restated
+in a schema. In particular a Zod `.max()` on a string counts UTF-16 units, which
+is the measure that module exists to argue against.
+
 ### Do not reformat
 
 `backlog/` and `docs/spin-the-wheel-editor/` are excluded from Prettier and
