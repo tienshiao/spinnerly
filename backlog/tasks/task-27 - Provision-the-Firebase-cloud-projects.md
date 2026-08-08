@@ -4,7 +4,7 @@ title: Provision the Firebase cloud projects
 status: To Do
 assignee: []
 created_date: '2026-08-07 18:09'
-updated_date: '2026-08-07 18:18'
+updated_date: '2026-08-08 09:08'
 labels: []
 dependencies: []
 documentation:
@@ -76,5 +76,18 @@ created: 2026-08-07 18:18
 Resolved — the stray TASK-5 dependency is gone. Removed by hand-editing the frontmatter, with the user's explicit approval to depart from the CLI-only convention for this one case, since the CLI has no option to clear dependencies. Verified afterwards that the CLI still parses and round-trips the file.
 
 This task blocks on nothing. It is console work and can be done at any time, in parallel with TASK-5.
+---
+
+author: @claude
+created: 2026-08-08 09:08
+---
+From TASK-14: after step 2 creates each Firestore database, and before that environment takes any real data, apply the TTL policies:
+
+    GOOGLE_APPLICATION_CREDENTIALS=<the JSON from step 4> npm run ttl:configure -- --project <projectId>
+    npm run ttl:check -- --project <projectId>     # until all three report ACTIVE
+
+Once per project, so twice. The script covers three collection groups — wheels, wheelSecrets and suggestions — because a TTL delete does not cascade to subcollections and because a secret outliving its wheel leaves a live, publicly suggestable wheel whose owner has permanently lost the kill switch.
+
+This is the step TASK-14 could not do: TTL is a cloud-only feature, the emulator serves no field-configuration API, and there was no project to apply anything to. It is also the one that fails silently if skipped — nothing in the application depends on a policy existing, so wheels keep working and simply never go away. TASK-14's AC 2 stays unchecked until this runs.
 ---
 <!-- COMMENTS:END -->

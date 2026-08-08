@@ -10,6 +10,8 @@
     "dev:emulator": "firebase emulators:exec --ui \"npm run seed && npm run dev\"",
     "emulator": "firebase emulators:start",
     "seed": "node --env-file=.env.development --env-file-if-exists=.env.local scripts/seed-emulator.mjs",
+    "ttl:configure": "node scripts/configure-ttl.mjs",
+    "ttl:check": "node scripts/configure-ttl.mjs --check",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
