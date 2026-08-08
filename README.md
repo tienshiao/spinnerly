@@ -200,18 +200,28 @@ That starts the Firestore emulator, seeds it with a wheel, and runs the dev
 server against it. **There is no setup step and no secret to obtain** — see
 below.
 
-| Command                | What                                             |
-| ---------------------- | ------------------------------------------------ |
-| `npm run dev:emulator` | Emulator + seed + dev server, one command        |
-| `npm run dev`          | Dev server only (expects an emulator already up) |
-| `npm run emulator`     | Emulator only, left running across restarts      |
-| `npm run seed`         | Reseed a running emulator                        |
-| `npm run build`        | Production build; fails on type errors           |
-| `npm run typecheck`    | `tsc --noEmit`                                   |
-| `npm run lint`         | ESLint, including the local `spinnerly/*` rules  |
-| `npm run test`         | Node test runner — the local ESLint rules        |
-| `npm run format`       | Prettier write                                   |
-| `npm run format:check` | Prettier check                                   |
+| Command                 | What                                             |
+| ----------------------- | ------------------------------------------------ |
+| `npm run dev:emulator`  | Emulator + seed + dev server, one command        |
+| `npm run dev`           | Dev server only (expects an emulator already up) |
+| `npm run emulator`      | Emulator only, left running across restarts      |
+| `npm run seed`          | Reseed a running emulator                        |
+| `npm run build`         | Production build; fails on type errors           |
+| `npm run typecheck`     | `tsc --noEmit`                                   |
+| `npm run lint`          | ESLint, including the local `spinnerly/*` rules  |
+| `npm test`              | Vitest `unit` project — runs on a bare install   |
+| `npm run test:emulator` | Vitest `emulator` project, against Firestore     |
+| `npm run test:all`      | Both                                             |
+| `npm run format`        | Prettier write                                   |
+| `npm run format:check`  | Prettier check                                   |
+
+Two more exist for deployed environments only, and neither is part of any local
+workflow — see [§8](docs/spin-the-wheel-design.md#the-ttl-policy-resolved):
+
+| Command                                   | What                                                                   |
+| ----------------------------------------- | ---------------------------------------------------------------------- |
+| `npm run ttl:check -- --project <id>`     | Report TTL policy state; non-zero if any collection group is uncovered |
+| `npm run ttl:configure -- --project <id>` | Apply the missing policies                                             |
 
 Next.js 16 with the App Router, React 19, Tailwind v4, TypeScript 6 in strict
 mode.
@@ -395,8 +405,15 @@ Three items in the design doc are cheap now and expensive or impossible later:
 1. **App Check** (TASK-24). Trivial config on day one, a lockstep client
    migration afterwards. With rate limiting deferred out of v1, this is the
    primary abuse defense, not a secondary one.
-2. **The Firestore TTL policy** (TASK-14). Trivial at creation time and
+2. **The Firestore TTL policies** (TASK-14). Trivial at creation time and
    impossible to retrofit onto data users have already been told we would keep.
+   Configured by `npm run ttl:configure -- --project <id>`, once per
+   environment, and **verified** by `npm run ttl:check` reporting `ACTIVE` for
+   all three collection groups — `wheels`, `wheelSecrets` and `suggestions`.
+   Three, because a TTL delete does not cascade to subcollections and because a
+   secret outliving its wheel is a wheel nobody can ever shut off. Nothing in
+   the app depends on a policy existing, so a missing one fails silently: wheels
+   keep working and simply never go away.
 3. **A Firestore budget alert** (TASK-25). Public write is a billing surface.
    This is the tripwire that tells us the rate-limiting deferral has stopped
    being safe.

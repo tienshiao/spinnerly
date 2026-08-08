@@ -362,9 +362,19 @@ sidesteps the whole problem. The `status` field therefore only ever holds
 ```js
 {
   editTokenHash: string,      // SHA-256 of the edit token — never the raw value
-  createdAt: timestamp
+  createdAt: timestamp,
+  expiresAt: timestamp        // TTL target, always LATER than the wheel's (§8)
 }
 ```
+
+`expiresAt` is set a margin _after_ the wheel's own, not equal to it. The two
+documents are written and slid together but reaped by independent per-collection
+TTL jobs with no ordering guarantee between them, and only one of the two orders
+is safe: a wheel reaped before its secret is inert, while a **secret reaped
+before its wheel leaves a live, publicly readable, still-suggestable wheel whose
+owner has permanently lost the kill switch** — with no recovery, because the
+token cannot be reissued. The margin makes that order impossible rather than
+unlikely.
 
 Never readable by clients. Storing only a hash means a database leak doesn't
 hand out edit rights to every live wheel.
@@ -618,8 +628,97 @@ reuses, which is exactly the usage the transferable edit URL and duplicate flow
 are meant to support. Implementation cost is the same either way: one field, one
 Firestore TTL policy.
 
-**Decide this before launch.** TTL is trivial at creation time and impossible to
-retrofit onto data users have already been promised we'd keep.
+Every mutating route slides both documents together, through one helper, so the
+wheel and its secret can never drift apart. The one write that deliberately does
+_not_ slide is `POST /wheels/{shareId}/duplicate`, which reads the source and
+leaves it untouched — see _Duplicate_ below.
+
+### The TTL policy (resolved)
+
+**Three collection groups, not one:** `wheels`, `wheelSecrets` and
+`suggestions`, all on `expiresAt`. A policy is scoped to a collection group and
+covers every instance of that name in the hierarchy, so the `suggestions` entry
+reaps `wheels/{any}/suggestions` without needing one policy per wheel.
+
+Each of the three is load-bearing, and the second and third are the ones easy to
+forget:
+
+- **`wheelSecrets` without a policy** means the secret outlives its wheel
+  forever. `assertEditor` authorises on the existence of `wheelSecrets/{shareId}`,
+  so it keeps succeeding for a wheel that has been reaped, and the collection
+  grows without bound. The secret is written to expire a margin _after_ the
+  wheel so the two are never reaped in the dangerous order (see
+  `SECRET_EXPIRY_MARGIN_DAYS`).
+- **`suggestions` without a policy** leaves the whole queue behind, because
+  **a TTL delete does not cascade to the deleted document's subcollections.**
+  That orphan is arbitrary user-submitted text with nothing left to reach it
+  from — precisely the indefinite ownership this section exists to prevent.
+
+`spins` is absent on purpose: it is phase 2 (§9) and nothing writes one yet. It
+joins the list in the same change that first writes a spin.
+
+There is no `firebase-tools` command for TTL, and this is not left as a runbook
+of `gcloud` invocations. It is `scripts/configure-ttl.mjs`, run once per
+environment against the Firestore Admin API:
+
+```
+npm run ttl:configure -- --project spinnerly-prod    # apply
+npm run ttl:check     -- --project spinnerly-prod    # verify; non-zero if not
+```
+
+Enabling is a long-running operation, so a freshly applied policy reads
+`CREATING` until Firestore has processed the documents already stored.
+**`ACTIVE` on all three is the verification, and `NEEDS_REPAIR` is a failure** —
+it means the policy took for new documents and failed for existing ones, which a
+check that merely asked "is TTL configured?" would report as success while the
+entire stored backlog quietly never expired.
+
+The policy is not applied by anything in CI or at deploy time, and deliberately
+so: it is database configuration, it is idempotent but slow, and it belongs with
+provisioning (TASK-27) rather than with a release.
+
+### Suggestions expire with their wheel, and sometimes before it (resolved)
+
+Each suggestion carries its own `expiresAt`, set equal to the wheel's **at
+submit time** and never slid afterwards. The consequence is deliberate and
+asymmetric:
+
+- A suggestion can **never outlive its wheel.** That is the unrecoverable
+  direction — the orphan above — and it is now impossible rather than unlikely.
+- A suggestion **can be reaped under a live wheel**, 30 days after it was
+  submitted, on a wheel whose own expiry has kept sliding.
+
+The second is accepted rather than fixed. Fixing it means sliding every
+suggestion whenever the wheel is touched — a fan-out of up to
+`PENDING_SUGGESTIONS_MAX` subcollection writes per edit, on a wheel whose submit
+path is unauthenticated and therefore attacker-drivable. What is lost instead is
+a suggestion nobody accepted or rejected in a month, which is the stale text
+this section wants gone anyway. A reaped _accepted_ suggestion costs even less:
+its option is a copy living in the wheel document, so only the `fromSuggestion`
+provenance dangles, and nothing dereferences it.
+
+### An expired wheel that hasn't been reaped yet (resolved)
+
+Firestore deletes "typically within 24 hours" after expiry and **expired
+documents keep serving reads until the reaper runs.** In that window a wheel
+behaves exactly as a live one: readable, editable, forkable, and any write
+slides it back out of danger.
+
+No route checks `expiresAt`. The alternative — refusing writes to a wheel past
+its timestamp — means every route disagreeing with what Firestore itself is
+doing, and a wheel that 404s on write while still serving reads is a stranger
+state to explain than one that simply still works. It also matters for the
+escape hatch: duplicating an expired wheel is exactly what someone reaches for
+in that window, and §8's whole purpose is served by the wheel eventually going
+away, not by the last day being precise.
+
+One consequence worth naming, since it reads like a hole in the first
+justification above: `POST /suggestions` is unauthenticated and it slides, so
+anyone holding a leaked share URL can keep that wheel alive indefinitely by
+submitting to it. The bound is the editor's kill switch — a submission refused
+because `suggestionsOpen` is false writes nothing at all, and therefore slides
+nothing. Closing suggestions on a wheel you have lost track of is what puts it
+back on a clock.
 
 ### Duplicate
 
@@ -671,27 +770,29 @@ scoping separately rather than bolting on.
 
 ## 10. Decisions
 
-| #   | Question                                   | Decision                                                                                                                    |
-| --- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Is the edit URL transferable?              | **Yes** — token is a bearer capability, multiple concurrent editors supported (§2, §6)                                      |
-| 2   | Edits during spin animation?               | **View frozen client-side**, data not locked — no server-side lock in either phase (§6)                                     |
-| 3   | Can participants see the suggestion queue? | **Yes** — public queue, reject is a hard delete (§4)                                                                        |
-| 4   | TTL length?                                | **30 days, sliding** — refreshed on any activity (§8)                                                                       |
-| 5   | Duplicate-wheel flow?                      | **Yes** — open to anyone with the share URL (§8)                                                                            |
-| 6   | Does option order matter?                  | **No** — no reorder op; all mutations commute (§6)                                                                          |
-| 7   | Framework?                                 | **Next.js App Router** — server-rendered OG metadata is the deciding factor (§3)                                            |
-| 8   | Hosting?                                   | **Vercel** — simplicity; cross-cloud write hop is negligible at this volume (§3)                                            |
-| 9   | Rate limiting in v1?                       | **Deferred** — App Check + per-wheel caps + budget alert instead of standing up Redis (§7)                                  |
-| 10  | Can option labels be edited in place?      | **No** — remove and re-add; no `PATCH` option endpoint. Keeps every mutation commutative (§6)                               |
-| 11  | How do rejected suggestions appear?        | **They don't** — reject is a hard delete, no tombstone, no "Declined" chip (§4)                                             |
-| 12  | Suggestion attribution?                    | **None** — no submitter name in v1; identity arrives deliberately with chat in phase 2 (§4, §9)                             |
-| 13  | Do participants see a spin?                | **No in v1** — the spin is local to the spinning browser, and the copy must say so (§6)                                     |
-| 14  | Mobile support?                            | **Responsive throughout, participant view mobile-first** — the share link lives in group chats (§1)                         |
-| 15  | Is the "Picked" chip persisted?            | **No — local-only**, client state in the spinning browser, gone on refresh. No schema, no endpoint (§4)                     |
-| 16  | Where do the editor affordances live?      | **Title inline in the header; `suggestionsOpen` in the Suggestions panel header; duplicate in a header overflow menu** (§7) |
-| 17  | Does duplicate rename the fork?            | **No — title copied verbatim.** Renaming is one field edit away if the forker wants it (§8)                                 |
-| 18  | Firestore mode and location?               | **Native mode, `us-east1`** — pairs with Vercel's `iad1`; both choices are permanent (§3)                                   |
-| 19  | Local development environment?             | **Firebase Emulator Suite** — no cloud project, no service account on dev machines, and it makes §5 rules testable (§3)     |
+| #   | Question                                       | Decision                                                                                                                               |
+| --- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Is the edit URL transferable?                  | **Yes** — token is a bearer capability, multiple concurrent editors supported (§2, §6)                                                 |
+| 2   | Edits during spin animation?                   | **View frozen client-side**, data not locked — no server-side lock in either phase (§6)                                                |
+| 3   | Can participants see the suggestion queue?     | **Yes** — public queue, reject is a hard delete (§4)                                                                                   |
+| 4   | TTL length?                                    | **30 days, sliding** — refreshed on any activity (§8)                                                                                  |
+| 5   | Duplicate-wheel flow?                          | **Yes** — open to anyone with the share URL (§8)                                                                                       |
+| 6   | Does option order matter?                      | **No** — no reorder op; all mutations commute (§6)                                                                                     |
+| 7   | Framework?                                     | **Next.js App Router** — server-rendered OG metadata is the deciding factor (§3)                                                       |
+| 8   | Hosting?                                       | **Vercel** — simplicity; cross-cloud write hop is negligible at this volume (§3)                                                       |
+| 9   | Rate limiting in v1?                           | **Deferred** — App Check + per-wheel caps + budget alert instead of standing up Redis (§7)                                             |
+| 10  | Can option labels be edited in place?          | **No** — remove and re-add; no `PATCH` option endpoint. Keeps every mutation commutative (§6)                                          |
+| 11  | How do rejected suggestions appear?            | **They don't** — reject is a hard delete, no tombstone, no "Declined" chip (§4)                                                        |
+| 12  | Suggestion attribution?                        | **None** — no submitter name in v1; identity arrives deliberately with chat in phase 2 (§4, §9)                                        |
+| 13  | Do participants see a spin?                    | **No in v1** — the spin is local to the spinning browser, and the copy must say so (§6)                                                |
+| 14  | Mobile support?                                | **Responsive throughout, participant view mobile-first** — the share link lives in group chats (§1)                                    |
+| 15  | Is the "Picked" chip persisted?                | **No — local-only**, client state in the spinning browser, gone on refresh. No schema, no endpoint (§4)                                |
+| 16  | Where do the editor affordances live?          | **Title inline in the header; `suggestionsOpen` in the Suggestions panel header; duplicate in a header overflow menu** (§7)            |
+| 17  | Does duplicate rename the fork?                | **No — title copied verbatim.** Renaming is one field edit away if the forker wants it (§8)                                            |
+| 18  | Firestore mode and location?                   | **Native mode, `us-east1`** — pairs with Vercel's `iad1`; both choices are permanent (§3)                                              |
+| 19  | Local development environment?                 | **Firebase Emulator Suite** — no cloud project, no service account on dev machines, and it makes §5 rules testable (§3)                |
+| 20  | What happens to orphaned subcollections?       | **Each suggestion carries its own `expiresAt`**, set at submit and never slid. Never outlives its wheel; may die under a live one (§8) |
+| 21  | How does an expired-but-unreaped wheel behave? | **As a live wheel** — no route checks `expiresAt`, and any write slides it back out of danger (§8)                                     |
 
 Decisions 10–16 resolve conflicts between this document and the Claude Design
 prototype in `docs/spin-the-wheel-editor/`. Where the two disagree, this table

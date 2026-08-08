@@ -345,10 +345,11 @@ export async function createWheel(
     // see SECRET_EXPIRY_MARGIN_DAYS, where the order the two are reaped in turns
     // out to matter a great deal in one direction and not at all in the other.
     //
-    // TASK-14 still owns the TTL policy itself, and has to configure it on this
-    // collection as well as on wheels. The sliding half is done: `updateWheel`
-    // moves both fields together, and every route that writes should go through
-    // it rather than growing a second mechanism.
+    // The policy that acts on this field is applied by
+    // scripts/configure-ttl.mjs, which covers this collection as well as wheels
+    // and suggestions. Sliding is `updateWheel` and the writes that share its
+    // helper, which move both fields together — a route that needs to slide
+    // should go through `slidingExpiry` rather than growing a second mechanism.
     expiresAt: nextSecretExpiry(expiresAt),
   })
   await batch.commit()
@@ -547,24 +548,47 @@ export async function updateWheel(
   await commit(() => batch.commit(), 'updateWheel', shareId)
 }
 
+/** The 404 both functions below answer with. */
+function noSuchWheel(): EditorAuthError {
+  return new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+}
+
 /**
- * Record that the wheel/secret pair has come apart, and return the 404 to
- * answer with.
+ * Record a wheel that is gone while its secret is still there, and return the
+ * 404 to answer with.
  *
- * The two documents are written together and reaped together (see
- * `SECRET_EXPIRY_MARGIN_DAYS`), so one of them existing without the other is our
- * data being inconsistent rather than a client mistake. Every caller here has
- * already passed `assertEditor`, which means the secret existed a moment ago —
- * whichever half turns out to be missing, something happened that should not
- * have.
+ * **This is the expected end of a wheel's life, not a fault**, which is why it
+ * is a warning rather than an error. `SECRET_EXPIRY_MARGIN_DAYS` deliberately
+ * makes the secret outlive the wheel, so once the TTL policies are applied
+ * (design doc section 8) there is a window of roughly that length after every
+ * reaping in which exactly this happens: `assertEditor` succeeds because the
+ * secret is still there, and the write then finds no wheel.
  *
- * Without the log line it would reach the client as a routine-looking 404 and
- * reach the logs not at all. The 404s a route can also produce, from `isShareId`
- * and from `assertEditor`, are ordinary client errors and stay unlogged on
- * purpose; this one is worth waking up to.
+ * Logged at all because the same shape is also what a hand-deleted or otherwise
+ * lost wheel looks like, and a silent 404 would be the one inconsistency that
+ * never reaches the logs. Logged at `warn` because an error-severity alarm
+ * firing on the ordinary path is worse than no alarm — it teaches whoever reads
+ * production logs to skip the line, and then the real case goes unread too.
+ */
+function reapedWheel(operation: string, shareId: string): EditorAuthError {
+  console.warn(
+    `${operation}: wheels/${shareId} is missing but ${WHEEL_SECRETS}/${shareId} ` +
+      'is not. Expected within the secret’s expiry margin after a TTL reaping; ' +
+      'outside that window it means the wheel was lost some other way.',
+  )
+
+  return noSuchWheel()
+}
+
+/**
+ * Record that the wheel/secret pair has come apart in a way nothing explains,
+ * and return the 404 to answer with.
  *
- * `missing` says which half is known to be gone, because that is not always
- * knowable — see `commit`.
+ * Unlike `reapedWheel`, this is reached when it is not knowable which half went
+ * — see `commit` — so it cannot be attributed to the reaping window and stays an
+ * error. The 404s a route can also produce, from `isShareId` and from
+ * `assertEditor`, are ordinary client errors and stay unlogged on purpose; this
+ * one is worth waking up to.
  */
 function pairSplit(
   operation: string,
@@ -577,7 +601,7 @@ function pairSplit(
     error,
   )
 
-  return new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  return noSuchWheel()
 }
 
 /**
@@ -715,10 +739,7 @@ export async function addOption(
           // wheel is the halves having come apart, not an unknown wheel. Left
           // as a bare 404 it would be the one inconsistency that never reaches
           // the logs.
-          throw pairSplit(
-            'addOption',
-            `wheels/${shareId} is missing but its secret is not`,
-          )
+          throw reapedWheel('addOption', shareId)
         }
 
         const options = storedOptions(snapshot.data())
@@ -787,10 +808,7 @@ export async function removeOption(
   if (!snapshot.exists) {
     // As in `addOption`: the caller has passed `assertEditor`, so the secret
     // was there a moment ago and a missing wheel is the pair having come apart.
-    throw pairSplit(
-      'removeOption',
-      `wheels/${shareId} is missing but its secret is not`,
-    )
+    throw reapedWheel('removeOption', shareId)
   }
 
   const doomed = storedOptions(snapshot.data()).find(
@@ -946,25 +964,25 @@ export async function submitSuggestion(
     // to avoid.
     //
     // Set equal to the wheel's expiry AT SUBMIT TIME, and never slid
-    // afterwards. That is the cheap half of a decision TASK-14 has to finish,
-    // and the cost is real rather than notional: the wheel's expiry moves
-    // forward on every write, this one does not, so on a wheel still in use
-    // after 30 days the TTL policy deletes pending suggestions out of a live
-    // queue that participants can see, and accepted ones out from under the
-    // `fromSuggestion` provenance pointing at them.
+    // afterwards. That is decision 20, and the cost is real rather than
+    // notional: the wheel's expiry moves forward on every write and this one
+    // does not, so on a wheel still in use after 30 days the policy deletes
+    // pending suggestions out of a live queue that participants can see, and
+    // accepted ones out from under the `fromSuggestion` provenance pointing at
+    // them.
     //
-    // Not fixed here because the fix is a fan-out — sliding up to 200
-    // subcollection documents on every edit — and choosing between that, a
-    // collection-group sweep and simply accepting the loss is the TTL design
-    // TASK-14 owns. What is settled is the direction: a suggestion must not
-    // outlive its wheel, because that is the orphan above and it is
-    // unrecoverable, whereas one reaped early is a row on a wheel nobody has
-    // touched in a month.
+    // Accepted rather than fixed, because the fix is a fan-out — sliding up to
+    // PENDING_SUGGESTIONS_MAX subcollection documents on every edit, on a wheel
+    // whose submit path is unauthenticated and therefore attacker-drivable —
+    // and what it buys back is a suggestion nobody actioned in a month. The
+    // direction is what matters and it is asymmetric: a suggestion must not
+    // outlive its wheel, because that orphan is unrecoverable, whereas one
+    // reaped early is a row on a wheel nobody has touched since.
     //
-    // TASK-14 owns the policy itself and must configure it on the `suggestions`
-    // collection group as well as on `wheels` and `wheelSecrets`. This field is
-    // written now because a TTL field is trivial at write time and impossible to
-    // backfill onto rows already stored.
+    // Both halves of that are asserted in app/api/wheels/expiry.emulator.test.ts
+    // — that this never runs past the wheel, and that no route slides it. The
+    // policy itself is applied by scripts/configure-ttl.mjs, on the
+    // `suggestions` collection group as well as on `wheels` and `wheelSecrets`.
     expiresAt: slide.wheel.expiresAt,
   })
   batch.update(wheelRef, slide.wheel)
@@ -1046,10 +1064,7 @@ export async function acceptSuggestion(
           // As in `addOption`: the caller has passed `assertEditor`, so the
           // secret was there a moment ago and a missing wheel is the pair
           // having come apart rather than an unknown wheel.
-          throw pairSplit(
-            'acceptSuggestion',
-            `wheels/${shareId} is missing but its secret is not`,
-          )
+          throw reapedWheel('acceptSuggestion', shareId)
         }
 
         if (!suggestion.exists) {
