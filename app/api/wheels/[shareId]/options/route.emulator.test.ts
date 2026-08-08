@@ -323,7 +323,13 @@ describe('the option cap', () => {
 })
 
 describe('concurrent editors', () => {
-  it('lands both of two simultaneous adds', async () => {
+  // Timed out for the reason spelled out on the five-way case below, and note
+  // that two racers cost the same as five: every contended case in this suite
+  // runs around three seconds on an idle machine, because the price is one
+  // backoff cycle rather than one per racer. Vitest's 5s default leaves that
+  // barely any headroom while every uncontended test here finishes in under a
+  // tenth of a second, so the default is not a budget any of these can rely on.
+  it('lands both of two simultaneous adds', { timeout: 20_000 }, async () => {
     // The lost-update bug the granular endpoints exist to prevent: the edit URL
     // is transferable (design doc section 2), so two editors adding at the same
     // moment is a normal case, and a whole-array write would have the second
@@ -371,19 +377,25 @@ describe('concurrent editors', () => {
     ).toBe(labels.length)
   })
 
-  it('does not overrun the cap under concurrency', async () => {
-    // Two adds racing against the last free slot. Whichever order they resolve
-    // in, the wheel must not end up holding more than the cap.
-    const { shareId, editToken } = await seed(OPTIONS_MAX - 1)
+  // Timed out for the same reason again, with a fixture that adds to it: seeding
+  // one short of the cap writes 49 options before the race even starts.
+  it(
+    'does not overrun the cap under concurrency',
+    { timeout: 20_000 },
+    async () => {
+      // Two adds racing against the last free slot. Whichever order they resolve
+      // in, the wheel must not end up holding more than the cap.
+      const { shareId, editToken } = await seed(OPTIONS_MAX - 1)
 
-    const results = await Promise.all([
-      run(shareId, { label: 'Racer one' }, editToken),
-      run(shareId, { label: 'Racer two' }, editToken),
-    ])
+      const results = await Promise.all([
+        run(shareId, { label: 'Racer one' }, editToken),
+        run(shareId, { label: 'Racer two' }, editToken),
+      ])
 
-    expect(results.map((r) => r.status).toSorted()).toEqual([201, 409])
-    expect((await read(shareId)).options).toHaveLength(OPTIONS_MAX)
-  })
+      expect(results.map((r) => r.status).toSorted()).toEqual([201, 409])
+      expect((await read(shareId)).options).toHaveLength(OPTIONS_MAX)
+    },
+  )
 })
 
 describe('sliding expiry', () => {

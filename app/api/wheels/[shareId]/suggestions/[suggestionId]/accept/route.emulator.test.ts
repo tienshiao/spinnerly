@@ -204,22 +204,37 @@ describe('accepting twice', () => {
     expect((await readWheel(shareId)).options).toHaveLength(1)
   })
 
-  it('adds the option exactly once when two accepts race', async () => {
-    // The case the transaction exists for. Both requests read `pending` at the
-    // same moment unless the read and the write are one atomic step.
-    const { shareId, editToken, suggestionId } = await seed()
+  // Timed out explicitly, like the concurrency cases in the options suite, and
+  // for the same reason: this test deliberately makes two transactions contend
+  // on one document, so the loser backs off for around a second before retrying
+  // and the Admin SDK allows it five attempts. That is seconds of latency by
+  // design, and against Vitest's 5s default it is a test that passes on an idle
+  // machine and fails on a busy one — which is what it did, once, in CI-like
+  // conditions with a build running alongside it.
+  //
+  // Raising the budget rather than reducing the contention: the contention is
+  // the property under test, and a flake here would read as the duplicate this
+  // guards against rather than as a slow machine.
+  it(
+    'adds the option exactly once when two accepts race',
+    { timeout: 20_000 },
+    async () => {
+      // The case the transaction exists for. Both requests read `pending` at the
+      // same moment unless the read and the write are one atomic step.
+      const { shareId, editToken, suggestionId } = await seed()
 
-    const results = await Promise.all([
-      run(shareId, suggestionId, editToken),
-      run(shareId, suggestionId, editToken),
-    ])
+      const results = await Promise.all([
+        run(shareId, suggestionId, editToken),
+        run(shareId, suggestionId, editToken),
+      ])
 
-    expect(results.map((r) => r.status)).toEqual([204, 204])
-    expect(
-      (await readWheel(shareId)).options,
-      'a double-click duplicated the option',
-    ).toHaveLength(1)
-  })
+      expect(results.map((r) => r.status)).toEqual([204, 204])
+      expect(
+        (await readWheel(shareId)).options,
+        'a double-click duplicated the option',
+      ).toHaveLength(1)
+    },
+  )
 
   it('writes nothing at all on the second accept', async () => {
     // Not even the expiry slide. A second click is not activity, and sliding on
