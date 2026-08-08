@@ -128,22 +128,36 @@ describe('createWheel', () => {
     expect(secret.exists, 'secret document missing').toBe(true)
   })
 
-  it('expires the wheel and its secret together', async () => {
-    // Both documents carry the expiry so the TTL policy reaps the pair. If only
-    // the wheel had one, the secret would outlive it forever and assertEditor
-    // would keep succeeding for a wheel that no longer exists.
+  it('expires the wheel at 30 days', async () => {
+    const { shareId } = await createWheel({ title: 'Lunch' }, db)
+    const wheel = await db.collection(WHEELS).doc(shareId).get()
+
+    const days =
+      (wheel.get('expiresAt').toDate().getTime() - Date.now()) / 86_400_000
+    expect(days).toBeGreaterThan(29)
+    expect(days).toBeLessThan(31)
+  })
+
+  it('expires its secret after the wheel, never before', async () => {
+    // Both documents carry an expiry so the TTL policy reaps the pair — an
+    // immortal secret means assertEditor keeps succeeding for a wheel that no
+    // longer exists, and wheelSecrets grows without bound.
+    //
+    // The two are not the same instant, and which goes first matters. They are
+    // reaped by independent per-collection TTL jobs with no ordering guarantee,
+    // and a secret reaped before its wheel leaves a live, publicly readable
+    // wheel still taking suggestions whose owner has permanently lost the kill
+    // switch. See SECRET_EXPIRY_MARGIN_DAYS in store.ts.
     const { shareId } = await createWheel({ title: 'Lunch' }, db)
     const [wheel, secret] = await Promise.all([
       db.collection(WHEELS).doc(shareId).get(),
       db.collection(WHEEL_SECRETS).doc(shareId).get(),
     ])
 
-    for (const snapshot of [wheel, secret]) {
-      const days =
-        (snapshot.get('expiresAt').toDate().getTime() - Date.now()) / 86_400_000
-      expect(days).toBeGreaterThan(29)
-      expect(days).toBeLessThan(31)
-    }
+    expect(
+      secret.get('expiresAt').toDate().getTime(),
+      'the secret is reapable before the wheel it unlocks',
+    ).toBeGreaterThan(wheel.get('expiresAt').toDate().getTime())
   })
 })
 

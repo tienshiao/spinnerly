@@ -30,6 +30,35 @@ export const WHEEL_SECRETS = 'wheelSecrets'
 const EXPIRY_DAYS = 30
 
 /**
+ * Extra days a wheel's secret outlives the wheel itself.
+ *
+ * The two documents are written together and expire together, but they are
+ * reaped by two independent per-collection TTL jobs. Firestore promises only
+ * that a deletion happens "typically within 24 hours after expiration" and
+ * gives no ordering guarantee whatsoever between collections, so with identical
+ * timestamps either can go first.
+ *
+ * One of those orders is harmless and the other is the failure this whole pairing
+ * exists to prevent:
+ *
+ *  - Wheel reaped first, secret lingering: inert. `assertEditor` succeeds and
+ *    every write then 404s on a document that is not there.
+ *  - **Secret reaped first, wheel lingering: a live wheel nobody can edit.** It
+ *    is still readable, still spinnable, and still accepting suggestions —
+ *    `POST /suggestions` is unauthenticated — while its owner has silently and
+ *    permanently lost the kill switch. There is no recovery: the token cannot be
+ *    reissued.
+ *
+ * A margin on the secret makes the second order impossible rather than unlikely.
+ * It is a hedge against an unbounded quantity, not a guarantee — Firestore
+ * documents no maximum lag — so it is set generously above the stated typical.
+ * The cost is two extra days of storing a hash, which is nothing: the secret
+ * holds no user content, so this does not weaken the data-minimisation argument
+ * in design doc section 8.
+ */
+const SECRET_EXPIRY_MARGIN_DAYS = 2
+
+/**
  * Firestore auto-IDs are exactly 20 characters of `[A-Za-z0-9]`.
  *
  * Validating the shape is load-bearing rather than hygiene. Both `db.doc(path)`
@@ -137,6 +166,21 @@ export async function assertEditor(
   }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** When a wheel touched now should expire. Design doc section 8. */
+function nextExpiry(): Date {
+  return new Date(Date.now() + EXPIRY_DAYS * DAY_MS)
+}
+
+/**
+ * When that wheel's secret should expire — always after the wheel. See
+ * `SECRET_EXPIRY_MARGIN_DAYS` for why the two are not the same instant.
+ */
+function nextSecretExpiry(wheelExpiry: Date): Date {
+  return new Date(wheelExpiry.getTime() + SECRET_EXPIRY_MARGIN_DAYS * DAY_MS)
+}
+
 /** What `createWheel` hands back. The only time a raw token leaves this module. */
 export type CreatedWheel = {
   shareId: string
@@ -174,7 +218,7 @@ export async function createWheel(
   const editToken = mintEditToken()
 
   const now = FieldValue.serverTimestamp()
-  const expiresAt = new Date(Date.now() + EXPIRY_DAYS * 24 * 60 * 60 * 1000)
+  const expiresAt = nextExpiry()
 
   const batch = db.batch()
   batch.set(wheelRef, {
@@ -195,26 +239,123 @@ export async function createWheel(
     updatedAt: now,
     // Set here because design doc section 8 is explicit that TTL is trivial at
     // creation and impossible to retrofit onto data users were promised we
-    // would keep. Sliding it forward on activity is TASK-14; this is only the
-    // initial value, so a wheel created before that lands still expires rather
-    // than living forever.
+    // would keep. `updateWheel` slides this forward on every edit; this is the
+    // initial value.
     expiresAt,
   })
   batch.set(db.collection(WHEEL_SECRETS).doc(shareId), {
     editTokenHash: hashEditToken(editToken),
     createdAt: now,
-    // The same expiry as the wheel, so the TTL policy reaps the pair together.
-    // Without it the secret outlives the wheel forever: `assertEditor` would
-    // keep succeeding for a wheel that no longer exists, and a `set(...,
-    // {merge: true})` in a later route would resurrect it with no expiresAt at
-    // all — permanently un-reapable. It also leaves wheelSecrets growing
-    // without bound, which is the opposite of what design doc section 8 is for.
+    // Bounded, rather than left to live forever, for two reasons: an immortal
+    // secret means `assertEditor` keeps succeeding for a wheel that no longer
+    // exists, and it leaves wheelSecrets growing without bound, which is the
+    // opposite of what design doc section 8 is for.
     //
-    // TASK-14 owns the TTL policy itself, and needs to configure it on this
-    // collection as well as on wheels, plus slide both fields together.
-    expiresAt,
+    // Deliberately later than the wheel's own expiry rather than equal to it —
+    // see SECRET_EXPIRY_MARGIN_DAYS, where the order the two are reaped in turns
+    // out to matter a great deal in one direction and not at all in the other.
+    //
+    // TASK-14 still owns the TTL policy itself, and has to configure it on this
+    // collection as well as on wheels. The sliding half is done: `updateWheel`
+    // moves both fields together, and every route that writes should go through
+    // it rather than growing a second mechanism.
+    expiresAt: nextSecretExpiry(expiresAt),
   })
   await batch.commit()
 
   return { shareId, editToken }
+}
+
+/**
+ * The fields a wheel patch may set. Deliberately not `options`.
+ *
+ * Options are mutated only through the granular add and remove endpoints. A
+ * whole-array write is the lost-update bug those endpoints exist to avoid, and
+ * the edit URL being transferable makes concurrent editors a supported case
+ * rather than an edge one (design doc section 6). The type is the first line of
+ * that defence; the route refuses an `options` key explicitly as the second.
+ */
+export type WheelPatch = {
+  title?: string
+  suggestionsOpen?: boolean
+}
+
+/**
+ * Apply a partial update to a wheel and slide its expiry forward.
+ *
+ * Every caller must have passed `assertEditor` first. This function does not
+ * check authorization and has no way to — it is handed a shareId and trusts it.
+ *
+ * Two things happen here beyond writing the caller's fields, and both are design
+ * doc section 8 rather than incidental bookkeeping:
+ *
+ *  - `updatedAt` moves, because that is what the field is for.
+ *  - `expiresAt` moves on BOTH documents, in one batch. Sliding only the wheel
+ *    is the tempting half-measure and it is a slow-acting bug: the secret keeps
+ *    its original 30-day expiry, gets reaped while an actively used wheel lives
+ *    on, and `assertEditor` then fails for a wheel nobody can edit again. The
+ *    secret keeps its margin over the wheel — see `SECRET_EXPIRY_MARGIN_DAYS`,
+ *    which is what stops the same failure arriving by a different route when
+ *    the wheel really does expire.
+ *
+ * `update` rather than `set(..., {merge: true})` so a wheel that no longer
+ * exists is an error rather than being silently recreated without a title, a
+ * `createdAt`, or any of the fields the data model says it has.
+ */
+export async function updateWheel(
+  shareId: string,
+  patch: WheelPatch,
+  db: Firestore = getAdminDb(),
+): Promise<void> {
+  // Defensive rather than redundant. `assertEditor` validates the shape too, but
+  // this function is separately reachable and a slash in `shareId` would make
+  // `doc()` resolve a path of the caller's choosing — see SHARE_ID above.
+  if (!isShareId(shareId)) {
+    throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  }
+
+  const expiresAt = nextExpiry()
+
+  const batch = db.batch()
+  batch.update(db.collection(WHEELS).doc(shareId), {
+    ...patch,
+    updatedAt: FieldValue.serverTimestamp(),
+    expiresAt,
+  })
+  batch.update(db.collection(WHEEL_SECRETS).doc(shareId), {
+    expiresAt: nextSecretExpiry(expiresAt),
+  })
+
+  try {
+    await batch.commit()
+  } catch (error) {
+    if (!isNotFound(error)) throw error
+
+    // Firestore reports a missing document on `update` as gRPC status 5.
+    //
+    // Getting here means one of the pair is gone while the other is not: the
+    // caller already passed `assertEditor`, so the secret existed a moment ago.
+    // That is not a client mistake — it is our data being inconsistent — and
+    // without this line it would reach the client as a routine-looking 404 and
+    // reach the logs not at all. The two 404s the route can also produce, from
+    // `isShareId` and from `assertEditor`, are ordinary client errors and stay
+    // unlogged on purpose; this one is worth waking up to.
+    console.error(
+      `updateWheel: wheels/${shareId} is missing but its secret is not. ` +
+        'One of the pair was deleted without the other.',
+      error,
+    )
+
+    throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  }
+}
+
+/** Whether a Firestore error is NOT_FOUND (gRPC status 5). */
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code: unknown }).code === 5
+  )
 }
