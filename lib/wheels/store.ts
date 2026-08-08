@@ -8,6 +8,7 @@ import { getAdminDb } from '@/lib/firebase/admin'
 import {
   assertOptionCapacity,
   assertPendingSuggestionCapacity,
+  DEFAULT_TITLE,
   ValidationError,
 } from './validation'
 import {
@@ -353,6 +354,140 @@ export async function createWheel(
   await batch.commit()
 
   return { shareId, editToken }
+}
+
+/**
+ * The options of a source wheel, in the shape `createWheel` seeds a new one with.
+ *
+ * Narrowing rather than validating. Every element here was written by
+ * `optionElement`, so the checks exist to satisfy the type system and to make the
+ * function total over data that has somehow come out wrong — not to police input,
+ * which nothing about a fork is.
+ *
+ * An element with no usable label — absent, not a string, or empty — is dropped
+ * rather than made to fail the whole
+ * fork. This endpoint is the escape hatch (design doc section 8), so refusing to
+ * copy 49 good options because a 50th is malformed would break it precisely when
+ * it is most needed.
+ *
+ * The id is carried across when it can be, which is what `createWheel`'s optional
+ * `id` exists for — but only within `OPTION_ID_MAX`, because `assertOptionId`
+ * refuses anything longer and a fork holding an option too long to name would be
+ * a wheel with an option nobody can ever delete.
+ */
+function copyableOptions(stored: unknown[]): { id?: string; label: string }[] {
+  const copied: { id?: string; label: string }[] = []
+
+  for (const option of stored) {
+    const { id, label } = (option ?? {}) as { id?: unknown; label?: unknown }
+
+    // The empty string is dropped as well as the non-string, because it is a
+    // slice with nothing written on it: `validateOptionLabel` refuses one, and
+    // this function is the only thing standing between a stored label and the
+    // fork, since a copied label is deliberately not re-validated.
+    //
+    // Length is deliberately NOT checked, and the asymmetry against
+    // `OPTIONS_MAX` below is the same one this codebase draws elsewhere.
+    // OPTIONS_MAX is a storage boundary — past it the document breaches
+    // Firestore's 1MB limit and the write fails outright — so a lowered cap has
+    // to be enforced on the way past. OPTION_LABEL_MAX is a product cap with no
+    // storage consequence, so a fork carrying a label a point over a later,
+    // lower limit is cosmetically stale rather than broken, and truncating
+    // someone's option to fit is the worse answer.
+    if (typeof label !== 'string' || label.length === 0) continue
+
+    const usableId =
+      typeof id === 'string' && id.length > 0 && id.length <= OPTION_ID_MAX
+
+    copied.push(usableId ? { id: id as string, label } : { label })
+  }
+
+  return copied
+}
+
+/**
+ * Fork a wheel into a new one. Design doc section 8.
+ *
+ * **Unauthenticated, deliberately.** Anyone holding the share URL may fork —
+ * it is the escape hatch when a wheel expires, when the edit token is lost, or
+ * when someone wants the list for their own group. Nothing is disclosed that the
+ * share URL did not already expose: the caller could read every field copied here
+ * straight from Firestore (design doc section 5).
+ *
+ * **The source wheel is not written to at all.** Not even the expiry slide every
+ * other write in this module applies, and that is a decision rather than an
+ * omission. Forking is a read of the source, and reading is not activity — but
+ * more to the point, this is the one path that reaches a wheel with no credential
+ * and no cap. Sliding here would let anyone who once saw a share URL keep that
+ * wheel alive forever by calling this on a timer, quietly defeating the bounded
+ * lifetime of a leaked link that design doc section 8 lists as expiry's first
+ * reason for existing.
+ *
+ * A consequence worth knowing: a wheel past its `expiresAt` but not yet reaped
+ * forks fine. Firestore TTL deletes "typically within 24 hours", so there is a
+ * window where the escape hatch still works on an expired wheel, which is exactly
+ * when someone reaches for it.
+ *
+ * What the fork gets is a wheel created from scratch and seeded, not a copy of a
+ * document — `createWheel` mints the shareId, the edit token, `createdAt`,
+ * `updatedAt` and `expiresAt`, and writes `suggestionsOpen: true` regardless of
+ * what the source had. Suggestions and spins are subcollections and are simply
+ * not read, so they do not come along.
+ */
+export async function duplicateWheel(
+  shareId: string,
+  db: Firestore = getAdminDb(),
+): Promise<CreatedWheel> {
+  // As everywhere else — see SHARE_ID. There is no `assertEditor` on this path
+  // to have checked it first, so this is the only guard between a URL segment
+  // and a document path.
+  if (!isShareId(shareId)) {
+    throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  }
+
+  const source = await db.collection(WHEELS).doc(shareId).get()
+  if (!source.exists) {
+    // Not `pairSplit`: unlike the editor routes, nothing has established that
+    // this wheel existed a moment ago, so a missing document is an unknown
+    // wheel rather than our data having come apart.
+    throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  }
+
+  const title: unknown = source.get('title')
+  const options = copyableOptions(storedOptions(source.data()))
+
+  // A source cannot be over the cap today, since every path that writes an
+  // option checks it — but a future release lowering `OPTIONS_MAX` would
+  // otherwise fork an older wheel straight past the new limit, and the failure
+  // would be Firestore refusing an oversized document as a 500 rather than the
+  // 409 this gives.
+  //
+  // The count goes in `current` and `adding` is zero, which is the same
+  // predicate as the bulk form `(0, options.length)` — `n + 0` and `0 + n` clear
+  // `OPTIONS_MAX` identically, boundary included. What differs is the message,
+  // which interpolates `current` alone: passing the count as `adding` reports "a
+  // wheel holds at most 40 options, and this one has 0" for a source holding 45.
+  // Both numbers wrong, on the one message a forker ever sees.
+  assertOptionCapacity(options.length, 0)
+
+  return createWheel(
+    {
+      // Verbatim, per decision 17. Not re-run through `validateTitle`: the
+      // source title was sanitised when it was written, and re-sanitising would
+      // let a change to those rules silently rewrite a title the forker never
+      // typed and cannot see us edit. `DEFAULT_TITLE` only for a source whose
+      // title is not a string at all, which this API cannot produce — a fork
+      // that reads as untitled beats one that fails.
+      title: typeof title === 'string' ? title : DEFAULT_TITLE,
+      // `fromSuggestion` is deliberately not among the fields copied, so
+      // `optionElement` sets it to null. It names a document in the SOURCE
+      // wheel's suggestions subcollection, which the fork does not have and
+      // never will — carrying it across would point the fork's provenance at
+      // another wheel's queue, which is worse than no provenance at all.
+      options,
+    },
+    db,
+  )
 }
 
 /**
