@@ -1,11 +1,11 @@
 ---
 id: TASK-10
 title: 'Implement PATCH /api/wheels/[shareId] — title and suggestionsOpen'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:37'
-updated_date: '2026-08-08 02:52'
+updated_date: '2026-08-08 03:02'
 labels: []
 dependencies:
   - TASK-7
