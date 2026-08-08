@@ -1,8 +1,11 @@
 import 'server-only'
 
+import { randomUUID } from 'node:crypto'
+
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 
 import { getAdminDb } from '@/lib/firebase/admin'
+import { assertOptionCapacity, ValidationError } from './validation'
 import {
   editTokenMatches,
   hashEditToken,
@@ -181,6 +184,71 @@ function nextSecretExpiry(wheelExpiry: Date): Date {
   return new Date(wheelExpiry.getTime() + SECRET_EXPIRY_MARGIN_DAYS * DAY_MS)
 }
 
+/**
+ * The bookkeeping every successful write applies, computed once so the two
+ * documents cannot drift apart.
+ *
+ * Returned as a pair of payloads rather than applied to a writer, because the
+ * callers are a `WriteBatch` in one case and a `Transaction` in another and the
+ * two only look alike. What matters is that no caller gets to compute the
+ * secret's expiry independently of the wheel's — see `SECRET_EXPIRY_MARGIN_DAYS`
+ * for what goes wrong when those two numbers are decided in different places.
+ */
+function slidingExpiry(): {
+  wheel: { updatedAt: FieldValue; expiresAt: Date }
+  secret: { expiresAt: Date }
+} {
+  const expiresAt = nextExpiry()
+  return {
+    wheel: { updatedAt: FieldValue.serverTimestamp(), expiresAt },
+    secret: { expiresAt: nextSecretExpiry(expiresAt) },
+  }
+}
+
+/** An option as it is stored inside `wheels/{shareId}.options`. */
+export type StoredOption = {
+  id: string
+  label: string
+  addedAt: Date
+  /** The suggestion this came from, or null when an editor typed it. */
+  fromSuggestion: string | null
+}
+
+/**
+ * Build the stored form of an option.
+ *
+ * Every path that writes into `options` goes through here — creation, the add
+ * endpoint, and eventually accepting a suggestion — because `arrayRemove`
+ * matches elements by deep equality. An element written with the fields in a
+ * different set is an element the remove endpoint cannot address, and the
+ * failure would be a silent no-op delete rather than an error.
+ *
+ * `addedAt` is a real `Date`, not `FieldValue.serverTimestamp()`. Firestore only
+ * accepts the sentinel at the top level of a document or inside a map — putting
+ * one in an array element is rejected at write time. This is the server's
+ * wall-clock rather than Firestore's, which is fine for a field nothing orders
+ * or compares across wheels.
+ *
+ * `id` is generated here by default and is not accepted from the client, even
+ * though design doc section 4 calls it "client-stable". Stable is a property of
+ * the value, not a statement about who mints it: the client keys its animations
+ * on whatever id comes back. Taking one from the request would let a client
+ * write two options with the same id, and `DELETE .../options/{id}` would then
+ * remove both — a data-loss bug handed to us by an input we never needed.
+ */
+function optionElement(input: {
+  label: string
+  id?: string
+  fromSuggestion?: string | null
+}): StoredOption {
+  return {
+    id: input.id ?? randomUUID(),
+    label: input.label,
+    addedAt: new Date(),
+    fromSuggestion: input.fromSuggestion ?? null,
+  }
+}
+
 /** What `createWheel` hands back. The only time a raw token leaves this module. */
 export type CreatedWheel = {
   shareId: string
@@ -204,7 +272,12 @@ export type CreatedWheel = {
  * readable wheel that nobody can edit or delete.
  */
 export async function createWheel(
-  input: { title: string; options?: { id: string; label: string }[] },
+  // `id` is optional so a caller that has no meaningful one — anything but
+  // `POST /wheels/{shareId}/duplicate` copying a source wheel — gets a fresh
+  // one minted by `optionElement` rather than having to invent it. Requiring it
+  // was the shape that would have let an unauthenticated create supply two
+  // options with the same id; see `optionElement` for why that matters.
+  input: { title: string; options?: { id?: string; label: string }[] },
   db: Firestore = getAdminDb(),
 ): Promise<CreatedWheel> {
   // The auto-ID is minted client-side by the SDK rather than fetched, so this
@@ -223,17 +296,7 @@ export async function createWheel(
   const batch = db.batch()
   batch.set(wheelRef, {
     title: input.title,
-    options: (input.options ?? []).map((option) => ({
-      id: option.id,
-      label: option.label,
-      // A real Date, not FieldValue.serverTimestamp(). Firestore only accepts
-      // the sentinel at the top level of a document or inside a map — putting
-      // one in an array element is rejected at write time. This is server
-      // wall-clock rather than Firestore's, which is fine for a field nothing
-      // orders or compares across wheels.
-      addedAt: new Date(),
-      fromSuggestion: null,
-    })),
+    options: (input.options ?? []).map((option) => optionElement(option)),
     suggestionsOpen: true,
     createdAt: now,
     updatedAt: now,
@@ -314,40 +377,278 @@ export async function updateWheel(
     throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
   }
 
-  const expiresAt = nextExpiry()
+  const slide = slidingExpiry()
 
   const batch = db.batch()
-  batch.update(db.collection(WHEELS).doc(shareId), {
-    ...patch,
-    updatedAt: FieldValue.serverTimestamp(),
-    expiresAt,
-  })
-  batch.update(db.collection(WHEEL_SECRETS).doc(shareId), {
-    expiresAt: nextSecretExpiry(expiresAt),
-  })
+  batch.update(db.collection(WHEELS).doc(shareId), { ...patch, ...slide.wheel })
+  batch.update(db.collection(WHEEL_SECRETS).doc(shareId), slide.secret)
 
+  await commit(() => batch.commit(), 'updateWheel', shareId)
+}
+
+/**
+ * Record that the wheel/secret pair has come apart, and return the 404 to
+ * answer with.
+ *
+ * The two documents are written together and reaped together (see
+ * `SECRET_EXPIRY_MARGIN_DAYS`), so one of them existing without the other is our
+ * data being inconsistent rather than a client mistake. Every caller here has
+ * already passed `assertEditor`, which means the secret existed a moment ago —
+ * whichever half turns out to be missing, something happened that should not
+ * have.
+ *
+ * Without the log line it would reach the client as a routine-looking 404 and
+ * reach the logs not at all. The 404s a route can also produce, from `isShareId`
+ * and from `assertEditor`, are ordinary client errors and stay unlogged on
+ * purpose; this one is worth waking up to.
+ *
+ * `missing` says which half is known to be gone, because that is not always
+ * knowable — see `commit`.
+ */
+function pairSplit(
+  operation: string,
+  missing: string,
+  error?: unknown,
+): EditorAuthError {
+  console.error(
+    `${operation}: ${missing}. The wheel and its secret are written together, ` +
+      'so one was deleted without the other.',
+    error,
+  )
+
+  return new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+}
+
+/**
+ * Commit a write of the wheel/secret pair, translating a missing document.
+ *
+ * Firestore reports a missing document on `update` as gRPC status 5, and does
+ * not say which of the batch's documents it was. The wheel is the likelier guess
+ * only for `updateWheel`, which does not read it first; the option writes check
+ * the wheel themselves before getting here, so for those the secret is what must
+ * have gone. Since one message covers all three, it names neither.
+ */
+async function commit(
+  write: () => Promise<unknown>,
+  operation: string,
+  shareId: string,
+): Promise<void> {
   try {
-    await batch.commit()
+    await write()
   } catch (error) {
     if (!isNotFound(error)) throw error
 
-    // Firestore reports a missing document on `update` as gRPC status 5.
-    //
-    // Getting here means one of the pair is gone while the other is not: the
-    // caller already passed `assertEditor`, so the secret existed a moment ago.
-    // That is not a client mistake — it is our data being inconsistent — and
-    // without this line it would reach the client as a routine-looking 404 and
-    // reach the logs not at all. The two 404s the route can also produce, from
-    // `isShareId` and from `assertEditor`, are ordinary client errors and stay
-    // unlogged on purpose; this one is worth waking up to.
-    console.error(
-      `updateWheel: wheels/${shareId} is missing but its secret is not. ` +
-        'One of the pair was deleted without the other.',
+    throw pairSplit(
+      operation,
+      `one of wheels/${shareId} and ${WHEEL_SECRETS}/${shareId} is missing`,
       error,
     )
+  }
+}
 
+/**
+ * How long an option's id may be. Generous — it is not a security boundary.
+ *
+ * Unlike `shareId`, an optionId never reaches a document path: it is compared
+ * against ids inside a document this module has already fetched by other means,
+ * so there is no traversal to prevent here. Nor does it save a read — the caller
+ * has already been through `assertEditor`. It bounds the string before it is
+ * scanned against every option on the wheel, and refuses obvious nonsense
+ * somewhere it can be named, which is all it claims to do.
+ *
+ * It sits well above the 36 characters `randomUUID` produces so that ids written
+ * by another path — a duplicated wheel copying an older wheel's — stay
+ * removable.
+ */
+const OPTION_ID_MAX = 128
+
+function assertOptionId(optionId: string): void {
+  // The `typeof` is not redundant with the parameter type: this value comes out
+  // of a route's path params, which are typed but not checked.
+  if (
+    typeof optionId !== 'string' ||
+    optionId.length === 0 ||
+    optionId.length > OPTION_ID_MAX
+  ) {
+    throw new ValidationError(
+      400,
+      'invalid_option_id',
+      'That is not an option ID.',
+    )
+  }
+}
+
+/**
+ * The options array of a fetched wheel, or `[]` for a document without one.
+ *
+ * `unknown[]` rather than `StoredOption[]`, and not out of caution: an element
+ * read back from Firestore does not have the type `optionElement` wrote. Its
+ * `addedAt` is a `Timestamp`, not a `Date`. Callers here only count these and
+ * match on `id`, and the whole element goes back to `arrayRemove` opaquely, so
+ * naming a type it does not have would buy nothing and mislead the next reader.
+ */
+function storedOptions(data: unknown): unknown[] {
+  const options = (data as { options?: unknown } | undefined)?.options
+  return Array.isArray(options) ? (options as unknown[]) : []
+}
+
+/** The id of a stored option element, if it has one. */
+function optionIdOf(option: unknown): unknown {
+  return (option as { id?: unknown } | null | undefined)?.id
+}
+
+/**
+ * Append one option to a wheel and slide its expiry forward.
+ *
+ * Every caller must have passed `assertEditor` first — as with `updateWheel`,
+ * this function is handed a shareId and trusts it.
+ *
+ * Two properties this has to hold, both from design doc section 6:
+ *
+ *  - **The options array is never written as a whole.** `arrayUnion` appends the
+ *    one new element server-side, so a second editor adding at the same moment
+ *    cannot have their option erased by our write. Firestore preserves array
+ *    order, which makes insertion order the display order for free — no sort
+ *    field, and no reorder operation to conflict over (decision 6).
+ *  - **The cap is checked against the count in the same transaction as the
+ *    write.** A read outside one lets two editors both see 49 and both add, and
+ *    `assertOptionCapacity` says as much at its own definition. The transaction
+ *    is what turns that into one add and one retry.
+ *
+ * The transaction is the only reason contention exists on this path at all. It
+ * costs nothing in correctness — two concurrent adds both land, because the
+ * retried attempt re-reads and re-appends rather than replaying a stale array —
+ * but it does cost latency: a loser backs off for around a second before trying
+ * again, and the Admin SDK gives it five attempts before the failure surfaces as
+ * a 500. That budget is deliberately left at its default rather than raised. A
+ * request retrying for a minute is worse than one that fails in seven seconds,
+ * and it would be killed by the platform's function timeout anyway. The
+ * concurrency this has to survive is a few humans clicking at once, not a fleet.
+ */
+export async function addOption(
+  shareId: string,
+  input: { label: string; fromSuggestion?: string | null },
+  db: Firestore = getAdminDb(),
+): Promise<StoredOption> {
+  // Defensive rather than redundant, exactly as in `updateWheel` — see SHARE_ID.
+  if (!isShareId(shareId)) {
     throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
   }
+
+  const wheelRef = db.collection(WHEELS).doc(shareId)
+  const secretRef = db.collection(WHEEL_SECRETS).doc(shareId)
+  const option = optionElement(input)
+
+  await commit(
+    () =>
+      db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(wheelRef)
+        if (!snapshot.exists) {
+          // Checked inside the transaction rather than before it, so the
+          // existence check and the write are the same atomic step. The throw
+          // escapes `runTransaction` unchanged and is not a retryable error, so
+          // this aborts rather than looping.
+          //
+          // Reported through `pairSplit` because the caller has already passed
+          // `assertEditor`: the secret was there a moment ago, so a missing
+          // wheel is the halves having come apart, not an unknown wheel. Left
+          // as a bare 404 it would be the one inconsistency that never reaches
+          // the logs.
+          throw pairSplit(
+            'addOption',
+            `wheels/${shareId} is missing but its secret is not`,
+          )
+        }
+
+        const options = storedOptions(snapshot.data())
+
+        // Skipped when this option is already there, which happens on exactly
+        // one path: a transaction retry after a commit that actually landed.
+        // `isRetryableTransactionError` retries UNAVAILABLE, UNKNOWN and
+        // DEADLINE_EXCEEDED, and every one of those can arrive after the backend
+        // committed. The append itself is already idempotent — the element is
+        // built once, outside the transaction, so `arrayUnion` re-adds a value
+        // the array holds — but the capacity check is not: at the boundary the
+        // re-read counts our own option and answers 409 `options_full` for an
+        // add that succeeded. This is what makes the whole operation idempotent
+        // rather than only its write.
+        if (!options.some((stored) => optionIdOf(stored) === option.id)) {
+          assertOptionCapacity(options.length)
+        }
+
+        const slide = slidingExpiry()
+        transaction.update(wheelRef, {
+          options: FieldValue.arrayUnion(option),
+          ...slide.wheel,
+        })
+        transaction.update(secretRef, slide.secret)
+      }),
+    'addOption',
+    shareId,
+  )
+
+  return option
+}
+
+/**
+ * Remove one option from a wheel by id and slide its expiry forward.
+ *
+ * Idempotent: removing an option that is already gone is a success, which is
+ * what makes a client safe to retry a DELETE whose response it never saw.
+ * Returns whether an element was actually matched, for callers that care.
+ *
+ * `arrayRemove` matches by deep equality on the whole element, not by id, so the
+ * exact stored element has to be read first and handed back. That read is
+ * deliberately NOT in a transaction, and the reason is decision 10: option
+ * labels are immutable, so a stored element never changes after it is written.
+ * The value read here is therefore still the value stored at commit time or it
+ * is not there at all, and in the second case `arrayRemove` removes nothing —
+ * which is the same answer a transaction would have produced, without taking a
+ * lock that concurrent adds would then contend on.
+ *
+ * The expiry slides even when nothing matched. A retry of a delete that already
+ * happened is ordinary editor activity, and making the wheel's lifetime depend
+ * on whether a client's first attempt got its response back would be a strange
+ * thing to have built.
+ */
+export async function removeOption(
+  shareId: string,
+  optionId: string,
+  db: Firestore = getAdminDb(),
+): Promise<boolean> {
+  if (!isShareId(shareId)) {
+    throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
+  }
+  assertOptionId(optionId)
+
+  const wheelRef = db.collection(WHEELS).doc(shareId)
+  const snapshot = await wheelRef.get()
+  if (!snapshot.exists) {
+    // As in `addOption`: the caller has passed `assertEditor`, so the secret
+    // was there a moment ago and a missing wheel is the pair having come apart.
+    throw pairSplit(
+      'removeOption',
+      `wheels/${shareId} is missing but its secret is not`,
+    )
+  }
+
+  const doomed = storedOptions(snapshot.data()).find(
+    (option) => optionIdOf(option) === optionId,
+  )
+
+  const slide = slidingExpiry()
+  const batch = db.batch()
+  batch.update(wheelRef, {
+    ...(doomed === undefined
+      ? {}
+      : { options: FieldValue.arrayRemove(doomed) }),
+    ...slide.wheel,
+  })
+  batch.update(db.collection(WHEEL_SECRETS).doc(shareId), slide.secret)
+
+  await commit(() => batch.commit(), 'removeOption', shareId)
+
+  return doomed !== undefined
 }
 
 /** Whether a Firestore error is NOT_FOUND (gRPC status 5). */
