@@ -4,7 +4,7 @@ title: Provision the Firebase cloud projects
 status: To Do
 assignee: []
 created_date: '2026-08-07 18:09'
-updated_date: '2026-08-08 09:08'
+updated_date: '2026-08-08 10:16'
 labels: []
 dependencies: []
 documentation:
@@ -89,5 +89,19 @@ From TASK-14: after step 2 creates each Firestore database, and before that envi
 Once per project, so twice. The script covers three collection groups — wheels, wheelSecrets and suggestions — because a TTL delete does not cascade to subcollections and because a secret outliving its wheel leaves a live, publicly suggestable wheel whose owner has permanently lost the kill switch.
 
 This is the step TASK-14 could not do: TTL is a cloud-only feature, the emulator serves no field-configuration API, and there was no project to apply anything to. It is also the one that fails silently if skipped — nothing in the application depends on a policy existing, so wheels keep working and simply never go away. TASK-14's AC 2 stays unchecked until this runs.
+---
+
+author: @claude
+created: 2026-08-08 10:16
+---
+From TASK-6: the security rules need deploying to each project, and they must go BEFORE the first deploy of application code that reads Firestore from the browser.
+
+    npm run rules:deploy -- --project <projectId>     # once per project, so twice
+
+Ordering matters and only one order is safe. A client reading a path the deployed rules do not yet permit fails with permission-denied, which presents as a wheel page that renders and then stays empty — not as an obvious error. Rules that permit more than any client currently reads are inert, so deploying them early costs nothing.
+
+Do this alongside the TTL step in comment #3; both are once-per-project commands against a database that has not taken real data yet. TASK-6's AC 1 stays unchecked until this runs.
+
+Note the rules are already enforced locally — firebase.json points at firestore.rules — so a browser read that works against the emulator is being checked against the same policy that will be deployed here. Deploying is the only remaining gap, not verifying.
 ---
 <!-- COMMENTS:END -->

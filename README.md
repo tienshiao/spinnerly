@@ -167,7 +167,10 @@ lib/firebase/
   client.ts                       Client SDK — client-only, reads only
 scripts/
   seed-emulator.mjs               Fixture data for a fresh emulator
+firestore.rules                   Security rules — the client read policy (§5)
+firestore.rules.emulator.test.ts  ...and an assertion per clause
 firebase.json, .firebaserc        Emulator config; demo-spinnerly is local-only
+.github/workflows/ci.yml          Checks, both test projects, and the build
 eslint-rules/                     Local lint rules enforcing design invariants
 docs/
   spin-the-wheel-design.md        The design doc. Read this first.
@@ -215,13 +218,17 @@ below.
 | `npm run format`        | Prettier write                                   |
 | `npm run format:check`  | Prettier check                                   |
 
-Two more exist for deployed environments only, and neither is part of any local
-workflow — see [§8](docs/spin-the-wheel-design.md#the-ttl-policy-resolved):
+Three more exist for deployed environments only, and none is part of any local
+workflow. The emulator needs no TTL policy and loads the rules from
+`firebase.json` by itself — see
+[§5](docs/spin-the-wheel-design.md#5-security-rules) and
+[§8](docs/spin-the-wheel-design.md#the-ttl-policy-resolved):
 
 | Command                                   | What                                                                   |
 | ----------------------------------------- | ---------------------------------------------------------------------- |
 | `npm run ttl:check -- --project <id>`     | Report TTL policy state; non-zero if any collection group is uncovered |
 | `npm run ttl:configure -- --project <id>` | Apply the missing policies                                             |
+| `npm run rules:deploy -- --project <id>`  | Deploy `firestore.rules`                                               |
 
 Next.js 16 with the App Router, React 19, Tailwind v4, TypeScript 6 in strict
 mode.
@@ -255,9 +262,10 @@ deployed-only variables you will never need locally.
   clash as a hard startup failure rather than falling back.
 - `firebase-tools` is a pinned devDependency, not a global install, so CI gets
   the same version. Run it via `npm run`, or `npx firebase` for anything else.
-- Security rules are not wired into `firebase.json` yet, so the emulator runs
-  open and says so on startup. TASK-6 adds `firestore.rules` and the
-  `@firebase/rules-unit-testing` suite.
+- **The emulator loads `firestore.rules`**, so a local client is governed by the
+  same policy a deployed one is. If a browser read starts failing with
+  `permission-denied` where it used to work, the rules are the first place to
+  look, not the query.
 
 #### `firebase-tools` is pinned to 14.18.0, and that is a Java decision
 
@@ -269,8 +277,8 @@ still say Java 11+, which was true until October 2025 and has been wrong since.
 
 14.18.0 is the last release that runs on a JDK 17, which is what this project
 targets. Bumping past it is not a version bump — it is a "everyone installs a
-new JDK, and CI grows a `setup-java` step" bump. Do it deliberately, together
-with TASK-6's rules-test job, not incidentally.
+new JDK" bump. CI already pins the same 17 in its `setup-java` step, so the pin
+and that step are a matched pair and have to move in the same commit.
 
 ### The two SDK modules
 
