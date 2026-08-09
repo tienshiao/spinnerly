@@ -165,6 +165,15 @@ app/
 lib/firebase/
   admin.ts                        Admin SDK — server-only, the write path
   client.ts                       Client SDK — client-only, reads only
+lib/wheels/
+  model.ts                        Shared shapes and ID guards — both sides
+  store.ts                        Server data access and the editor guard
+  validation.ts, request.ts       The caps, and the body-parsing layers
+  snapshot.ts                     Firestore document → the shared shapes
+  api-client.ts                   Typed write client for the route handlers
+  optimistic.ts                   The reconciliation. Read this before the UI.
+  use-wheel.ts, use-suggestions.ts  The two onSnapshot listeners
+  use-wheel-session.ts            All of the above, assembled for a page
 scripts/
   seed-emulator.mjs               Fixture data for a fresh emulator
 firestore.rules                   Security rules — the client read policy (§5)
@@ -321,6 +330,43 @@ local consts, `await import()` with no binding at all, `require()`, the internal
 `export { setDoc } from …` and `export *`, which are the nastiest case because
 they put a write one import away while ensuring nothing downstream ever mentions
 `firebase/firestore` again.
+
+### The optimistic layer, and when it lets go
+
+Routing writes through an API costs the app Firestore's latency compensation:
+normally the SDK echoes a client's own write into its local cache before the
+round trip, so edits look instant. Here the path is client → API → Firestore →
+snapshot back, and nothing an editor does appears until the last hop. The design
+doc calls this the single most likely "why does this feel bad" regression.
+
+`lib/wheels/optimistic.ts` is the answer, and it turns on one decision: **an
+optimistic row is retired when the change appears in a SNAPSHOT, never when the
+HTTP response arrives.** Retiring on the response is what anyone writes first,
+and it is the flicker — the 201 comes back, the local row is dropped, and the
+real row does not exist yet.
+
+Recognising the change takes two kinds of evidence. **Identity** is the change
+being visibly there — the option carries the ID the 201 returned, the rejected
+row is gone — and it can never fire too soon. **Version** is what makes a
+negative answer possible: every mutating route reports the `updatedAt` it stored,
+in an `x-wheel-updated-at` header, so once a snapshot reaches that value we are
+looking at a document that already includes our write. If the thing we added is
+not in it, it is not on its way — it was removed again.
+
+That second half is why `updatedAt` is a route-computed timestamp rather than
+`FieldValue.serverTimestamp()`. A sentinel resolves during the commit, leaving
+the route nothing to report; the trade is a few milliseconds of clock skew
+between function instances, which `expiresAt` and `addedAt` already accept.
+
+Accept is the awkward mutation: `POST /accept` answers 204, so `fromSuggestion`
+is the only identity available, and it needs both its documents because they
+arrive as two independent snapshots. The queue mutations need one thing more —
+the version is the wheel's, and it says nothing about a separate subscription,
+so they also wait for the suggestions listener to have delivered since.
+
+Nothing gives up on a settled entry on a timer. A write that succeeded is a
+change that exists, so the row is correct to draw whether or not the listener
+ever delivers it; what is bounded is the request, not the row.
 
 ### TypeScript is pinned to 6, deliberately
 

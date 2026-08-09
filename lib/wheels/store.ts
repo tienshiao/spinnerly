@@ -6,6 +6,18 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 
 import { getAdminDb } from '@/lib/firebase/admin'
 import {
+  isShareId,
+  isSuggestionId,
+  SUGGESTIONS,
+  WHEELS,
+  type CreatedSuggestion,
+  type CreatedWheel,
+  type SuggestionStatus,
+  type WheelOption,
+  type WheelPatch,
+  type WheelVersion,
+} from './model'
+import {
   assertOptionCapacity,
   assertPendingSuggestionCapacity,
   DEFAULT_TITLE,
@@ -31,11 +43,17 @@ import {
  *     never stored, logged, or put in a path or query string.
  */
 
-export const WHEELS = 'wheels'
+/**
+ * Kept here rather than in ./model.ts, unlike `WHEELS` and `SUGGESTIONS`.
+ *
+ * The browser has no business naming this collection: rules make it
+ * `read, write: if false` and nothing on the client can reach it. Leaving the
+ * name out of the module the client imports means a client-side read of it
+ * cannot be written by autocomplete — it would have to be typed as a string
+ * literal, which is the point at which `spinnerly/no-wheel-secret-queries` and
+ * a reviewer both get a look at it.
+ */
 export const WHEEL_SECRETS = 'wheelSecrets'
-
-/** The suggestions subcollection of a wheel. `wheels/{shareId}/suggestions`. */
-export const SUGGESTIONS = 'suggestions'
 
 /** Days a wheel lives without activity. Design doc section 8. */
 const EXPIRY_DAYS = 30
@@ -70,40 +88,25 @@ const EXPIRY_DAYS = 30
 const SECRET_EXPIRY_MARGIN_DAYS = 2
 
 /**
- * Firestore auto-IDs are exactly 20 characters of `[A-Za-z0-9]`.
- *
- * Validating the shape is load-bearing rather than hygiene. Both `db.doc(path)`
- * and `collection.doc(id)` resolve SLASHES as path separators, so an
- * unvalidated shareId taken from a URL is a path-traversal primitive: a caller
- * passing `a/b/c` walks into a document of their choosing rather than the one
- * the route means to check. Design doc section 6's rule that a caller "must
- * never be able to name which secret document is checked" is precisely this,
- * and it is not enforced by anything else in the stack.
- *
- * Shared with `isSuggestionId` below, which is the same shape for the same
- * reason — every ID this codebase puts in a path is one Firestore minted.
+ * The ID guards and the shared shapes live in ./model.ts, which is free of
+ * `server-only` so the browser half of design doc section 3 can import them
+ * too. Re-exported here so this module stays the one place the server imports
+ * wheel vocabulary from, and so there is still exactly one definition of each.
  */
-const SHARE_ID = /^[A-Za-z0-9]{20}$/
-
-export function isShareId(value: unknown): value is string {
-  return typeof value === 'string' && SHARE_ID.test(value)
-}
-
-/**
- * Whether `value` can name a suggestion document.
- *
- * The same shape and, more to the point, the same argument: a suggestion ID is
- * taken from the request path and reaches
- * `wheels/{shareId}/suggestions/{suggestionId}`, so an unvalidated one is a
- * path-traversal primitive exactly as `shareId` is. `../..` walks back out of
- * the subcollection and names a document on another wheel entirely.
- *
- * This is what separates it from `optionId`, which never reaches a path — see
- * `OPTION_ID_MAX` for why that one is a bound rather than a boundary.
- */
-export function isSuggestionId(value: unknown): value is string {
-  return typeof value === 'string' && SHARE_ID.test(value)
-}
+export {
+  isShareId,
+  isSuggestionId,
+  SUGGESTIONS,
+  WHEELS,
+  type CreatedSuggestion,
+  type CreatedWheel,
+  type Suggestion,
+  type SuggestionStatus,
+  type Wheel,
+  type WheelOption,
+  type WheelPatch,
+  type WheelVersion,
+} from './model'
 
 /**
  * An authorization failure with the status the route should return.
@@ -222,24 +225,80 @@ function nextSecretExpiry(wheelExpiry: Date): Date {
  * for what goes wrong when those two numbers are decided in different places.
  */
 function slidingExpiry(): {
-  wheel: { updatedAt: FieldValue; expiresAt: Date }
+  wheel: { updatedAt: Date; expiresAt: Date }
   secret: { expiresAt: Date }
 } {
   const expiresAt = nextExpiry()
   return {
-    wheel: { updatedAt: FieldValue.serverTimestamp(), expiresAt },
+    wheel: { updatedAt: writeVersion(), expiresAt },
     secret: { expiresAt: nextSecretExpiry(expiresAt) },
   }
 }
 
-/** An option as it is stored inside `wheels/{shareId}.options`. */
-export type StoredOption = {
-  id: string
-  label: string
-  addedAt: Date
-  /** The suggestion this came from, or null when an editor typed it. */
-  fromSuggestion: string | null
+/**
+ * The value written to `updatedAt`, and the version every mutating write hands
+ * back to its caller.
+ *
+ * **A real `Date` rather than `FieldValue.serverTimestamp()`, and that is the
+ * point of it.** A sentinel is opaque to the code that writes it: the server
+ * resolves it during the commit, so the route has nothing to return and a
+ * client has no way to ask "is the document I am looking at at or past the
+ * version my write produced?". Without an answer to that question the client
+ * can only count snapshot deliveries, which cannot tell a delivery generated
+ * after our commit from one still in flight from before it — see the retirement
+ * rules in ./optimistic.ts, which is the whole reason this field exists in this
+ * form.
+ *
+ * The cost is that `updatedAt` is now the route's wall clock rather than
+ * Firestore's, so two writes from two function instances can be ordered by
+ * clocks that differ by a few milliseconds. That is acceptable here and is not
+ * a new precedent: `expiresAt` — the field the TTL policy reaps on, and by some
+ * distance the most consequential timestamp in this system — has been computed
+ * this way since TASK-7, as has `addedAt` on every option.
+ *
+ * `createdAt` deliberately stays a server timestamp on both documents that have
+ * one. Nothing compares it to a value we returned, so it has no reason to give
+ * up Firestore's clock.
+ */
+function writeVersion(): Date {
+  return new Date()
 }
+
+/**
+ * Read a stored `updatedAt` back as a version, for the one path that reports a
+ * version it did not write.
+ *
+ * Defensive because the alternative is worse than useless: a value that is not
+ * a usable date must become null — meaning "no version to report" — rather than
+ * something coerced. `new Date(undefined)` is an Invalid Date, whose
+ * `toISOString()` throws, and any fallback clock reading would be ahead of the
+ * document, which is precisely the state this must never describe.
+ */
+function storedVersion(value: unknown): Date | null {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof (value as { toDate?: unknown }).toDate !== 'function'
+  ) {
+    return null
+  }
+
+  const date: unknown = (value as { toDate: () => unknown }).toDate()
+  return date instanceof Date && !Number.isNaN(date.getTime()) ? date : null
+}
+
+/**
+ * What this module WRITES: a `WheelOption` with `addedAt` narrowed back to
+ * non-null.
+ *
+ * The shared type allows null because a *reader* may not find a usable
+ * timestamp in a stored document — ./snapshot.ts decodes defensively rather
+ * than throwing inside an `onSnapshot` callback. Nothing that writes an option
+ * can produce that case, and `POST /options` puts `addedAt` in its response
+ * body, so the narrowing is what keeps that `.toISOString()` honest instead of
+ * optional-chained against a case this side cannot reach.
+ */
+export type StoredOption = WheelOption & { addedAt: Date }
 
 /**
  * Build the stored form of an option.
@@ -276,16 +335,9 @@ function optionElement(input: {
   }
 }
 
-/** What `createWheel` hands back. The only time a raw token leaves this module. */
-export type CreatedWheel = {
-  shareId: string
-  /**
-   * The raw edit token, in plaintext. Return it to the creator once, in the
-   * response body, and let it live in the URL fragment from there. It is not
-   * recoverable: only its hash is stored.
-   */
-  editToken: string
-}
+// `CreatedWheel` — what `createWheel` hands back, and the only time a raw token
+// leaves this module — is defined in ./model.ts and re-exported above, because
+// the API client parses the same shape back off the wire.
 
 /**
  * Create a wheel and its secret.
@@ -317,7 +369,7 @@ export async function createWheel(
   // Minted independently of shareId. See mintEditToken.
   const editToken = mintEditToken()
 
-  const now = FieldValue.serverTimestamp()
+  const createdAt = FieldValue.serverTimestamp()
   const expiresAt = nextExpiry()
 
   const batch = db.batch()
@@ -325,8 +377,13 @@ export async function createWheel(
     title: input.title,
     options: (input.options ?? []).map((option) => optionElement(option)),
     suggestionsOpen: true,
-    createdAt: now,
-    updatedAt: now,
+    createdAt,
+    // Not `createdAt`, even though the two describe the same instant here.
+    // `updatedAt` is the version a client compares its own write against, so it
+    // has to be a value this process knows — see `writeVersion`. Sharing the
+    // server-timestamp sentinel would make a wheel's first version the one
+    // value in the document's life that nothing could be compared with.
+    updatedAt: writeVersion(),
     // Set here because design doc section 8 is explicit that TTL is trivial at
     // creation and impossible to retrofit onto data users were promised we
     // would keep. `updateWheel` slides this forward on every edit; this is the
@@ -335,7 +392,7 @@ export async function createWheel(
   })
   batch.set(db.collection(WHEEL_SECRETS).doc(shareId), {
     editTokenHash: hashEditToken(editToken),
-    createdAt: now,
+    createdAt,
     // Bounded, rather than left to live forever, for two reasons: an immortal
     // secret means `assertEditor` keeps succeeding for a wheel that no longer
     // exists, and it leaves wheelSecrets growing without bound, which is the
@@ -491,19 +548,8 @@ export async function duplicateWheel(
   )
 }
 
-/**
- * The fields a wheel patch may set. Deliberately not `options`.
- *
- * Options are mutated only through the granular add and remove endpoints. A
- * whole-array write is the lost-update bug those endpoints exist to avoid, and
- * the edit URL being transferable makes concurrent editors a supported case
- * rather than an edge one (design doc section 6). The type is the first line of
- * that defence; the route refuses an `options` key explicitly as the second.
- */
-export type WheelPatch = {
-  title?: string
-  suggestionsOpen?: boolean
-}
+// `WheelPatch` — the fields a patch may set, deliberately not `options` — is
+// defined in ./model.ts and re-exported above.
 
 /**
  * Apply a partial update to a wheel and slide its expiry forward.
@@ -531,7 +577,7 @@ export async function updateWheel(
   shareId: string,
   patch: WheelPatch,
   db: Firestore = getAdminDb(),
-): Promise<void> {
+): Promise<WheelVersion> {
   // Defensive rather than redundant. `assertEditor` validates the shape too, but
   // this function is separately reachable and a slash in `shareId` would make
   // `doc()` resolve a path of the caller's choosing — see SHARE_ID above.
@@ -546,6 +592,8 @@ export async function updateWheel(
   batch.update(db.collection(WHEEL_SECRETS).doc(shareId), slide.secret)
 
   await commit(() => batch.commit(), 'updateWheel', shareId)
+
+  return { updatedAt: slide.wheel.updatedAt }
 }
 
 /** The 404 both functions below answer with. */
@@ -714,7 +762,7 @@ export async function addOption(
   shareId: string,
   input: { label: string; fromSuggestion?: string | null },
   db: Firestore = getAdminDb(),
-): Promise<StoredOption> {
+): Promise<WheelVersion & { option: StoredOption }> {
   // Defensive rather than redundant, exactly as in `updateWheel` — see SHARE_ID.
   if (!isShareId(shareId)) {
     throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
@@ -723,6 +771,7 @@ export async function addOption(
   const wheelRef = db.collection(WHEELS).doc(shareId)
   const secretRef = db.collection(WHEEL_SECRETS).doc(shareId)
   const option = optionElement(input)
+  let version: Date | null = null
 
   await commit(
     () =>
@@ -759,6 +808,11 @@ export async function addOption(
         }
 
         const slide = slidingExpiry()
+        // Assigned inside the callback rather than computed outside it because
+        // a transaction body can RUN MORE THAN ONCE under contention, and only
+        // the last attempt is the one that commits. A version computed outside
+        // would be the one no attempt wrote.
+        version = slide.wheel.updatedAt
         transaction.update(wheelRef, {
           options: FieldValue.arrayUnion(option),
           ...slide.wheel,
@@ -769,7 +823,7 @@ export async function addOption(
     shareId,
   )
 
-  return option
+  return { option, updatedAt: version }
 }
 
 /**
@@ -797,7 +851,7 @@ export async function removeOption(
   shareId: string,
   optionId: string,
   db: Firestore = getAdminDb(),
-): Promise<boolean> {
+): Promise<WheelVersion & { removed: boolean }> {
   if (!isShareId(shareId)) {
     throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
   }
@@ -827,26 +881,11 @@ export async function removeOption(
 
   await commit(() => batch.commit(), 'removeOption', shareId)
 
-  return doomed !== undefined
+  return { removed: doomed !== undefined, updatedAt: slide.wheel.updatedAt }
 }
 
-/**
- * The status of a suggestion. Two values, and never a third.
- *
- * There is deliberately no `"rejected"`. Design doc section 4 makes reject a
- * hard delete because the queue is visible to every participant, so a rejected
- * row would leave spam and abuse on display until someone built a filter. The
- * type is the first statement of that; `rejectSuggestion` deleting rather than
- * flipping is the second.
- */
-export type SuggestionStatus = 'pending' | 'accepted'
-
-/** A suggestion as `submitSuggestion` returns it. */
-export type CreatedSuggestion = {
-  id: string
-  label: string
-  status: SuggestionStatus
-}
+// `CreatedSuggestion` — what `submitSuggestion` returns — is defined in
+// ./model.ts and re-exported above, for the same reason as `CreatedWheel`.
 
 function assertSuggestionId(suggestionId: string): void {
   // 404 rather than 400, for the reason `assertEditor` gives about `shareId`:
@@ -892,7 +931,7 @@ export async function submitSuggestion(
   shareId: string,
   input: { label: string },
   db: Firestore = getAdminDb(),
-): Promise<CreatedSuggestion> {
+): Promise<WheelVersion & { suggestion: CreatedSuggestion }> {
   // `EditorAuthError` despite there being no editor here. The class is "an
   // error carrying the status and code a route should answer with"; its name
   // reflects where it lives rather than this call site, and using it keeps
@@ -991,9 +1030,12 @@ export async function submitSuggestion(
   await commit(() => batch.commit(), 'submitSuggestion', shareId)
 
   return {
-    id: suggestionRef.id,
-    label: input.label,
-    status: 'pending',
+    suggestion: {
+      id: suggestionRef.id,
+      label: input.label,
+      status: 'pending',
+    },
+    updatedAt: slide.wheel.updatedAt,
   }
 }
 
@@ -1033,7 +1075,7 @@ export async function acceptSuggestion(
   shareId: string,
   suggestionId: string,
   db: Firestore = getAdminDb(),
-): Promise<StoredOption | null> {
+): Promise<WheelVersion & { option: StoredOption | null }> {
   if (!isShareId(shareId)) {
     throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
   }
@@ -1044,6 +1086,19 @@ export async function acceptSuggestion(
   const suggestionRef = wheelRef.collection(SUGGESTIONS).doc(suggestionId)
 
   let created: StoredOption | null = null
+  /**
+   * Null until the transaction says otherwise, and never a clock read taken out
+   * here.
+   *
+   * The idempotent path below writes NOTHING, so a version computed before the
+   * transaction would be a value strictly ahead of what is stored — the one
+   * failure the whole mechanism cannot survive, because it describes a state no
+   * snapshot ever carries and every optimistic row on the wheel then waits for
+   * it forever. Reassigned on every attempt for the same reason as in
+   * `addOption`: a transaction body can run more than once and only the last
+   * attempt commits.
+   */
+  let version: Date | null = null
 
   await commit(
     () =>
@@ -1080,7 +1135,15 @@ export async function acceptSuggestion(
         // The idempotent path. No writes at all, not even the expiry slide —
         // a second click is not activity, and sliding on it would make a
         // wheel's lifetime depend on how many times its editor tapped.
-        if (status === 'accepted') return
+        //
+        // The version therefore comes from the wheel we have already read, not
+        // from a write we are not making. It is the honest answer to what the
+        // caller is really asking: the wheel is already at or past the state
+        // you wanted. Unreadable leaves it null, and the route sends no header.
+        if (status === 'accepted') {
+          version = storedVersion(wheel.get('updatedAt'))
+          return
+        }
 
         if (status !== 'pending') {
           // Unreachable through this API: nothing writes a third status, and
@@ -1115,6 +1178,7 @@ export async function acceptSuggestion(
         assertOptionCapacity(storedOptions(wheel.data()).length)
 
         const slide = slidingExpiry()
+        version = slide.wheel.updatedAt
         transaction.update(wheelRef, {
           options: FieldValue.arrayUnion(option),
           ...slide.wheel,
@@ -1130,7 +1194,7 @@ export async function acceptSuggestion(
     shareId,
   )
 
-  return created
+  return { option: created, updatedAt: version }
 }
 
 /**
@@ -1157,7 +1221,7 @@ export async function rejectSuggestion(
   shareId: string,
   suggestionId: string,
   db: Firestore = getAdminDb(),
-): Promise<void> {
+): Promise<WheelVersion> {
   if (!isShareId(shareId)) {
     throw new EditorAuthError(404, 'no_such_wheel', 'No wheel with that ID.')
   }
@@ -1175,6 +1239,8 @@ export async function rejectSuggestion(
   batch.update(db.collection(WHEEL_SECRETS).doc(shareId), slide.secret)
 
   await commit(() => batch.commit(), 'rejectSuggestion', shareId)
+
+  return { updatedAt: slide.wheel.updatedAt }
 }
 
 /** Whether a Firestore error is NOT_FOUND (gRPC status 5). */

@@ -81,7 +81,7 @@ async function seed(options = 0) {
     db,
   )
 
-  const suggestion = await submitSuggestion(shareId, { label: 'Tacos' }, db)
+  const { suggestion } = await submitSuggestion(shareId, { label: 'Tacos' }, db)
 
   return { shareId, editToken, suggestionId: suggestion.id }
 }

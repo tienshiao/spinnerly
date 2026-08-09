@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { domainCheck, parseBody } from '@/lib/wheels/request'
+import { domainCheck, parseBody, writeHeaders } from '@/lib/wheels/request'
 import { addOption, assertEditor, EditorAuthError } from '@/lib/wheels/store'
 import { validateOptionLabel, ValidationError } from '@/lib/wheels/validation'
 
@@ -89,7 +89,7 @@ export async function POST(
 
     const { label } = await parseBody(request, AddOptionBody)
 
-    const option = await addOption(shareId, { label })
+    const { option, updatedAt } = await addOption(shareId, { label })
 
     return Response.json(
       {
@@ -103,7 +103,7 @@ export async function POST(
       },
       {
         status: 201,
-        headers: { 'cache-control': 'no-store' },
+        headers: writeHeaders({ updatedAt }),
       },
     )
   } catch (error) {

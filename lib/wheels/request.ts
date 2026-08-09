@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { WHEEL_VERSION_HEADER, type WheelVersion } from './model'
 import { ValidationError } from './validation'
 
 /**
@@ -267,4 +268,35 @@ export async function parseBody<T>(
     domain?.code ?? 'invalid_body',
     issue.message,
   )
+}
+
+/**
+ * The headers every mutating route answers with on success.
+ *
+ * Two things, and both are easy to forget one route at a time.
+ *
+ * `cache-control: no-store` because these responses are either a bearer
+ * capability (`POST /wheels` returns a raw edit token) or a statement about a
+ * document that is about to change again. None of them may sit in a shared
+ * cache.
+ *
+ * `x-wheel-updated-at` is the version the write produced, and it is what lets a
+ * client ask whether the snapshot it is looking at is at or past its own write.
+ * See `WheelVersion` in ./model.ts for why a count of snapshots cannot answer
+ * that, and the retirement rules in ./optimistic.ts for what depends on it.
+ *
+ * **Omitted entirely rather than guessed** when the write has no version to
+ * report. Sending a value that was not stored is the one failure this whole
+ * mechanism cannot survive: it describes a state no snapshot ever carries, so
+ * every optimistic row on that wheel waits for it forever. No header at all
+ * costs the client only its ability to conclude that something is absent
+ * because it was deleted, which is a path it already handles.
+ */
+export function writeHeaders(version: WheelVersion): Record<string, string> {
+  return {
+    'cache-control': 'no-store',
+    ...(version.updatedAt === null
+      ? {}
+      : { [WHEEL_VERSION_HEADER]: version.updatedAt.toISOString() }),
+  }
 }

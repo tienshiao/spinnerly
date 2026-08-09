@@ -1,3 +1,4 @@
+import { writeHeaders } from '@/lib/wheels/request'
 import { assertEditor, EditorAuthError, removeOption } from '@/lib/wheels/store'
 import { ValidationError } from '@/lib/wheels/validation'
 
@@ -35,11 +36,11 @@ export async function DELETE(
     // is a 204 like any other, which is what makes a client safe to retry a
     // DELETE whose response it never saw. A 404 would turn the retry into an
     // error the user is shown for an operation that succeeded.
-    await removeOption(shareId, optionId)
+    const version = await removeOption(shareId, optionId)
 
     return new Response(null, {
       status: 204,
-      headers: { 'cache-control': 'no-store' },
+      headers: writeHeaders(version),
     })
   } catch (error) {
     if (error instanceof EditorAuthError) return error.toResponse()

@@ -91,6 +91,22 @@ as a React version problem rather than a config one.
 And the config is `.mts` because this package is not `"type": "module"`, so a
 `.ts` config gets loaded as CommonJS and warns.
 
+**A test needing a DOM declares `// @vitest-environment jsdom` on its first
+line.** There is no third project for it, and adding one would be a mistake: the
+split above is by what a test needs from _outside_ the install — Java, a running
+emulator — and jsdom is just a devDependency. A file keeps whichever project its
+name puts it in, so `lib/wheels/use-wheel.test.ts` runs under `npm test` and
+`lib/wheels/use-wheel.emulator.test.ts` under `npm run test:emulator`, both in
+jsdom. React component and hook tests use `@testing-library/react`.
+
+Two things that are true and surprising: the Firebase **client** SDK works
+inside jsdom against the emulator, which is what
+`lib/wheels/use-wheel.emulator.test.ts` relies on; and `firebase emulators:exec`
+does not load `.env.development`, so that test derives the `NEXT_PUBLIC_*`
+values the client SDK needs from `FIRESTORE_EMULATOR_HOST`, which
+`emulators:exec` does set. Derive rather than hard-code — the emulator does not
+always come up on the port you expect.
+
 **Assertions are Vitest's `expect`.** Not `node:assert` — keep new tests
 consistent with the existing suites. Three conventions worth following:
 
@@ -134,6 +150,55 @@ to reintroduce when refactoring auth into shared middleware, so
 Route handlers call `assertEditor`, which throws `EditorAuthError` — deliberately
 throwing rather than returning a result, so that forgetting to check it produces
 a 500 and no write, rather than an unauthorised write.
+
+### The client data path
+
+Six modules in `lib/wheels`, and the dependency direction is the guard rail:
+
+| Module                               | Runs   | Holds                                      |
+| ------------------------------------ | ------ | ------------------------------------------ |
+| `model.ts`                           | both   | shared shapes, ID guards, collection names |
+| `snapshot.ts`                        | client | Firestore document → those shapes          |
+| `api-client.ts`                      | client | one typed method per route handler         |
+| `optimistic.ts`                      | client | the reconciliation. Pure, React-free       |
+| `use-wheel.ts`, `use-suggestions.ts` | client | the two `onSnapshot` listeners             |
+| `use-wheel-session.ts`               | client | all of the above, assembled for a page     |
+
+**`model.ts` must never import `store.ts`.** It is the module both halves share,
+so anything it pulls in reaches a browser bundle. The direction being one-way is
+what makes a mistake loud: a client component reaching for `store.ts` gets
+`server-only`'s build error rather than the Admin SDK quietly shipped to a
+browser. `store.ts` re-exports everything in `model.ts`, so server code keeps
+importing from the module it already imports from. `wheelSecrets` is the one
+collection name deliberately left out of `model.ts`.
+
+**Three rules the optimistic layer rests on, all easy to undo by accident:**
+
+- **An entry retires on the snapshot, never on the HTTP response.** Retiring on
+  the response is the flicker — the row vanishes on the 201 and returns when the
+  snapshot lands. Design doc §3 has the per-mutation table; decision 22.
+- **Every mutating route reports the version it wrote**, in the
+  `x-wheel-updated-at` header, and that value has to equal the `updatedAt` it
+  stored. A header running ahead of the field describes a version no snapshot
+  ever carries, so every optimistic row on that wheel waits forever — and the
+  symptom is rows that never clear, not anything that looks like a timestamp
+  bug. This is why `updatedAt` is a route-computed `Date` rather than
+  `FieldValue.serverTimestamp()`: a sentinel resolves during the commit and
+  leaves the route nothing to report. Asserted across all six routes in
+  `app/api/wheels/expiry.emulator.test.ts`.
+- **`project()` is pure and takes no clock.** It runs during render, where
+  `Date.now()` is impure and `react-hooks/purity` fails lint on it. The slow
+  threshold is crossed by a timer in `use-wheel-session.ts` that sets a flag on
+  the entry. If you find yourself wanting the current time in `optimistic.ts`,
+  that is the sign to add another flag rather than another argument.
+
+Two more things worth knowing before touching any of it. The version is the
+**wheel's**, even on the suggestion routes, which works only **because TASK-14
+slides `expiresAt` on every mutating route** — one field versions the whole
+wheel, subcollection included. And it says nothing about the queue listener,
+which is a separate subscription, so the three suggestion mutations additionally
+wait for a queue delivery. Drop that and an optimistic suggestion row vanishes
+the moment the wheel catches up and reappears when the queue arrives.
 
 ### Validating a request body
 

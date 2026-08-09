@@ -18,6 +18,17 @@ import { configDefaults, defineConfig } from 'vitest/config'
  * worst a misnamed file can do is run in `unit` and fail loudly for want of an
  * emulator.
  *
+ * **A test that needs a DOM does NOT get a third project.** It declares
+ * `// @vitest-environment jsdom` on its first line, and it stays in whichever
+ * of the two projects its name puts it in — the hook tests in lib/wheels are
+ * split across both. The split above is by what a test needs from OUTSIDE the
+ * install: Java, a running emulator, things `npm install` cannot provide and CI
+ * has to arrange. jsdom is just a package, so a `dom` project would add a third
+ * name to every command and a third way to misname a file, in exchange for
+ * nothing. Both environments are set below rather than left to default, so the
+ * per-file directive reads as an override of something stated rather than of
+ * something assumed.
+ *
  * `.mts` rather than `.ts`: this package has no `"type": "module"`, so Vite's
  * native config loader treats a `.ts` config as CommonJS and warns about the
  * ESM syntax in it. The explicit extension settles it without making the whole
