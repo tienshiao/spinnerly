@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:38'
-updated_date: '2026-08-09 03:51'
+updated_date: '2026-08-09 03:55'
 labels: []
 dependencies:
   - TASK-3
@@ -138,8 +138,6 @@ Follow-up after manual testing: the freeze reads as a bug in the demo, so both t
 Unit 693 -> 694.
 <!-- SECTION:NOTES:END -->
 
-<!-- SECTION:NOTES:END -->
-
 ## Comments
 
 <!-- COMMENTS:BEGIN -->
@@ -166,7 +164,15 @@ useSpin freezes the wheel on the options it spun, from spin start until dismiss(
 
 Also relevant to TASK-17: the spin button is the page's, and its disabled state is useSpin's canSpin — false while spinning and below two options. Do not re-derive it from options.length, which misses the spinning half.
 ---
+
+author: @claude
+created: 2026-08-09 03:55
+---
+Raised by /code-review during TASK-16 and verified against the code rather than taken on report: versionCaughtUp is the only thing that can retire an entry whose identity evidence has gone false, the slow flag does not retire anything, and the comparison is a plain >= on two wall-clock Dates. Filed as TASK-29 rather than fixed in TASK-16, whose acceptance criteria touch none of this.
+---
 <!-- COMMENTS:END -->
+
+<!-- SECTION:NOTES:END -->
 
 ## Final Summary
 

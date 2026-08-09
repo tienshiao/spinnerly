@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:36'
-updated_date: '2026-08-08 15:43'
+updated_date: '2026-08-09 03:58'
 labels: []
 dependencies:
   - TASK-5
@@ -28,7 +28,7 @@ Collection group queries need the same scrutiny: verify collectionGroup("suggest
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 firestore.rules matches the policy in design doc section 5 and is deployed via a documented command
-- [ ] #2 A rules unit test suite runs against the Firestore emulator in CI
+- [x] #2 A rules unit test suite runs against the Firestore emulator in CI
 - [x] #3 Test: a client get on wheels/{knownId} succeeds
 - [x] #4 Test: a client list on the wheels collection is denied
 - [x] #5 Test: every client write to wheels, suggestions, spins and wheelSecrets is denied
@@ -94,6 +94,10 @@ Post-review fixes (/code-review, two findings, both confirmed and fixed):
 - LOW, the emulator cache comment did not match the key. It claimed to be keyed on the firebase-tools version 'since that is what decides which JAR gets fetched', while the key hashed package-lock.json — so any unrelated dependency bump missed and wrote a fresh 60MB entry. Now genuinely keyed on the firebase-tools version, read out of package.json in a preceding step (verified the shell line produces 14.18.0). restore-keys dropped along with it: with an exact-version key the only thing that invalidates the cache is a firebase-tools bump, and on a bump a fresh download is the correct behaviour rather than something to fall back from.
 
 Re-verified after the fixes: unit 283, emulator 269, lint, typecheck, format:check clean, production build succeeds.
+
+AC 2 ticked after the fact. .github/workflows/ci.yml provisions temurin 17 and runs npm run test:emulator under firebase emulators:exec, and the emulator project is the one firestore.rules.emulator.test.ts belongs to — so the 40-case suite has been running in CI since this task shipped it. It was left unchecked because AC 1 and AC 2 were being tracked as one pending item, and only AC 1 is actually blocked.
+
+AC 1 stays open, and only its second half: the rules match design doc section 5 and the deploy command is documented as npm run rules:deploy. Nothing has been deployed, because .firebaserc still points at demo-spinnerly and no cloud project exists. That step belongs to TASK-27, which also owns TASK-14's TTL apply for the same reason.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
