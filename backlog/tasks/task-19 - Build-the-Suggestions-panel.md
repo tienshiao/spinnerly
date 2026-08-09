@@ -1,11 +1,11 @@
 ---
 id: TASK-19
 title: Build the Suggestions panel
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:38'
-updated_date: '2026-08-09 21:28'
+updated_date: '2026-08-09 22:27'
 labels: []
 dependencies:
   - TASK-16
@@ -120,3 +120,13 @@ It is the only tool an editor has while a wheel is actively being spammed, so it
 The toggle is editor-only. Participants see the resulting closed-for-suggestions state, not the control.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Built the Suggestions panel in both variants, replacing the placeholder in the wheel page. One component driven by the resolved role and taking props rather than the session; controls follow the row's own state, so a pending row in the editor view gets Approve and Reject and everything else gets one of the only two chips there can be. The suggestionsOpen kill switch is a role=switch in the panel header (decision 16), left usable while its own write is outstanding because the optimistic layer settles rapid toggles on the last one. The participant submit row's draft is owned by the panel, since the row is unmounted by both the kill switch and the pending cap.
+
+Verified with 34 component cases and 5 page-level ones — unit suite 829, up from 788 — plus typecheck, lint, format:check and a production build. AC 1 and AC 10 were checked in a browser against the emulator, which jsdom cannot speak to: that pass confirmed an approve puts the option on the wheel and flips the row in one step with no flicker, and found a real 320px defect where the Approve/Reject pair squeezed the label over four lines, now fixed by wrapping the row.
+
+Two findings from review: the lost draft was fixed here, and the live-region announcement was filed as TASK-33 because it is one pattern across three sites and half-fixing it would leave two conventions in one file family. AC 3's double-click guard is the caller-side half only — the projection-level invariant remains TASK-32, which asked not to be closed by a disabled button.
+<!-- SECTION:FINAL_SUMMARY:END -->
