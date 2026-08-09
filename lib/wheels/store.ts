@@ -128,11 +128,20 @@ export class EditorAuthError extends Error {
     this.code = code
   }
 
-  /** The response body shape every write route returns for an auth failure. */
+  /**
+   * The response body shape every write route returns for an auth failure.
+   *
+   * `no-store` for the same reason `writeHeaders` carries it, and one status
+   * makes it more than housekeeping: the 404 for "no such wheel" is on RFC
+   * 9111 section 4.2.2's heuristically-cacheable list, so a shared cache may
+   * store it with no explicit freshness at all — and every one of these
+   * responses is an authorization decision keyed on a token the URL does not
+   * mention.
+   */
   toResponse(): Response {
     return Response.json(
       { error: this.code, message: this.message },
-      { status: this.status },
+      { status: this.status, headers: { 'cache-control': 'no-store' } },
     )
   }
 }

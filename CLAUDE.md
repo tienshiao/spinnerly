@@ -153,16 +153,17 @@ a 500 and no write, rather than an unauthorised write.
 
 ### The client data path
 
-Six modules in `lib/wheels`, and the dependency direction is the guard rail:
+Eight modules in `lib/wheels`, and the dependency direction is the guard rail:
 
-| Module                               | Runs   | Holds                                      |
-| ------------------------------------ | ------ | ------------------------------------------ |
-| `model.ts`                           | both   | shared shapes, ID guards, collection names |
-| `snapshot.ts`                        | client | Firestore document → those shapes          |
-| `api-client.ts`                      | client | one typed method per route handler         |
-| `optimistic.ts`                      | client | the reconciliation. Pure, React-free       |
-| `use-wheel.ts`, `use-suggestions.ts` | client | the two `onSnapshot` listeners             |
-| `use-wheel-session.ts`               | client | all of the above, assembled for a page     |
+| Module                                    | Runs   | Holds                                        |
+| ----------------------------------------- | ------ | -------------------------------------------- |
+| `model.ts`                                | both   | shared shapes, ID guards, collection names   |
+| `snapshot.ts`                             | client | Firestore document → those shapes            |
+| `api-client.ts`                           | client | one typed method per route handler           |
+| `optimistic.ts`                           | client | the reconciliation. Pure, React-free         |
+| `use-wheel.ts`, `use-suggestions.ts`      | client | the two `onSnapshot` listeners               |
+| `use-edit-token.ts`, `use-editor-role.ts` | client | the fragment, and what the server says of it |
+| `use-wheel-session.ts`                    | client | all of the above, assembled for a page       |
 
 **`model.ts` must never import `store.ts`.** It is the module both halves share,
 so anything it pulls in reaches a browser bundle. The direction being one-way is
@@ -199,6 +200,28 @@ wheel, subcollection included. And it says nothing about the queue listener,
 which is a separate subscription, so the three suggestion mutations additionally
 wait for a queue delivery. Drop that and an optimistic suggestion row vanishes
 the moment the wheel catches up and reappears when the queue arrives.
+
+### Resolving a role
+
+The role is the URL and nothing else (design doc §2), and there is no way to
+check the URL locally: the fragment never reaches a server, and §5's rules deny
+the client every read of `wheelSecrets`. So `use-editor-role.ts` asks
+`GET /api/wheels/{shareId}/editor` — decision 23 — and two of its rules are easy
+to undo:
+
+- **A three-state token, not a falsy one.** `use-edit-token.ts` returns
+  `undefined` for "not read yet" and `null` for "read, and there is none".
+  Collapsing them makes "no token" the answer during the server render and the
+  hydrating render, so every editor's page is built as a participant's first and
+  visibly rebuilt a moment later.
+- **Only `401` and `403` demote.** Everything else — a dropped connection, a
+  timeout, a `502`, a `404` — is no evidence, and the editor view stays.
+  Demoting on a network blip silently strips the role from someone holding a
+  good edit link, on a page that then looks like an ordinary share view. Nothing
+  is risked by trusting it: every write is still authorised on its own merits.
+
+The page waits for the role AND the first snapshot before rendering either. They
+race, so the cost is the slower one rather than the sum.
 
 ### Validating a request body
 

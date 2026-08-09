@@ -40,6 +40,14 @@ logs, analytics, and any error reporter added later. It also means the edit
 view cannot be server-rendered — see [the design doc](docs/spin-the-wheel-design.md#the-edit-page-cannot-be-server-rendered)
 before you try to "fix" that.
 
+A consequence worth knowing: the page cannot tell a real token from a truncated
+one on its own, because the server never sees the fragment and the security
+rules deny the client every read of `wheelSecrets`. It asks
+`GET /api/wheels/{shareId}/editor`, the one editor route that writes nothing.
+A `401` or `403` degrades the page to the shared view with a message; anything
+else — a dropped connection, a timeout — is treated as no evidence and leaves
+the editor view alone.
+
 The edit URL is a transferable bearer capability, so **two concurrent editors is
 a supported case, not an edge case.** Every option mutation is granular and
 commutes; the `options` array is never written wholesale.

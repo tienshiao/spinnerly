@@ -248,6 +248,14 @@ The edit token lives in the URL fragment (§2), which is never sent to the
 server. The edit page must therefore be a client component that reads
 `location.hash` on mount and then calls the API. Brief loading state, no SSR.
 
+Reading the fragment only answers whether a token is _present_. Whether it is
+_this wheel's_ takes a round trip to `GET /wheels/{shareId}/editor` (§6), which
+runs concurrently with the wheel's first snapshot — so the page waits for the
+slower of the two rather than for their sum. It waits for both: a page that
+rendered on the snapshot alone would have to pick a role for a frame and correct
+it, moving the spin button, the header controls and both panel variants when it
+did.
+
 **Do not "fix" this by moving the token into a route segment**
 (`/w/[id]/edit/[token]`). That puts it back in the request path and into every
 server and platform log — exactly what the fragment placement avoids.
@@ -639,7 +647,41 @@ _editor of wheel A receives 403 on wheel B._
 | `POST`   | `/wheels/{shareId}/suggestions`             | none   | Submit a suggestion                                                                |
 | `POST`   | `/wheels/{shareId}/suggestions/{id}/accept` | editor | Accept → transaction into `options`                                                |
 | `DELETE` | `/wheels/{shareId}/suggestions/{id}`        | editor | Reject (hard delete)                                                               |
+| `GET`    | `/wheels/{shareId}/editor`                  | editor | Is this token this wheel's? `204`, or the ordinary refusal. Writes nothing         |
 | `POST`   | `/wheels/{shareId}/spins`                   | editor | _(phase 2)_ Server-authoritative spin                                              |
+
+### Verifying the edit token (resolved)
+
+`GET /wheels/{shareId}/editor` is the only editor-authenticated route that
+writes nothing, and it exists because the page has no other way to learn its own
+role. The token lives in the URL fragment (§2), which no request carries to a
+server, and §5's rules deny the client every read of `wheelSecrets` — so a
+browser holding `#e=...` has no evidence at all about whether that token is
+real. Without this the edit page renders a complete editor from a truncated
+share link and only finds out when the user presses something.
+
+The body is `assertEditor` and nothing else, so the answer cannot drift from
+what the six write routes would say. It carries no `x-wheel-updated-at`: it
+produces no version, and a header naming one it did not write is exactly the
+value the optimistic layer compares against.
+
+Two alternatives were considered and are worse in ways that look cheaper:
+
+- **Validate on the first mutation** — trust the token, downgrade on the first 403. No new surface, but whatever the user had composed is lost, and the
+  editor UI was a lie for as long as it was on screen.
+- **A no-op `PATCH`** — uses only endpoints that already exist, and is a write.
+  Merely _opening_ an edit link would slide the wheel's 30-day expiry (§8) and
+  bump `updatedAt`, which every other viewer's listener then delivers as an edit
+  nobody made.
+
+**A failure to answer is not a refusal.** The client treats `401` and `403` as
+"not an editor" and everything else — a dropped connection, a timeout, a `502`,
+and `404` — as no evidence, keeping the editor view. The cautious-looking
+reading is the harmful one: demoting on a network blip silently strips the role
+from someone holding a good link and leaves them on a page that looks like an
+ordinary share view, with no reason to suspect a reload would fix it. Nothing is
+risked by trusting the token instead, because every write is still authorised on
+its own merits.
 
 ### Every mutating response reports its version
 
@@ -959,6 +1001,7 @@ scoping separately rather than bolting on.
 | 20  | What happens to orphaned subcollections?       | **Each suggestion carries its own `expiresAt`**, set at submit and never slid. Never outlives its wheel; may die under a live one (§8) |
 | 21  | How does an expired-but-unreaped wheel behave? | **As a live wheel** — no route checks `expiresAt`, and any write slides it back out of danger (§8)                                     |
 | 22  | When does an optimistic entry retire?          | **On the snapshot, never on the HTTP response** — by identity, or by the version the route reports in `x-wheel-updated-at` (§3, §6)    |
+| 23  | How does the page know its token is valid?     | **`GET /wheels/{shareId}/editor`** — a read-only check. Only `401`/`403` demote; a failure to answer keeps the editor view (§6)        |
 
 Decisions 10–16 resolve conflicts between this document and the Claude Design
 prototype in `docs/spin-the-wheel-editor/`. Where the two disagree, this table

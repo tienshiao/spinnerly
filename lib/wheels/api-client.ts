@@ -217,6 +217,41 @@ export function createWheelApi(options: WheelApiOptions = {}) {
   }
 
   return {
+    /**
+     * `GET /wheels/{shareId}/editor` — is this token this wheel's?
+     *
+     * The one read in this module, and the one method that does not throw on a
+     * refusal. A 401 or a 403 is the ANSWER here rather than a failure, so it
+     * comes back as a value; everything else is a failure and says so.
+     *
+     * **`'unknown'` is not a polite way of saying no.** Only an authoritative
+     * refusal demotes a caller to the participant view. A dropped connection, a
+     * cold start that timed out or a 502 from the platform are all evidence
+     * about the network and none about the token, and treating them as "not an
+     * editor" would silently strip the role from someone holding a perfectly
+     * good edit link — recoverable only by a reload they have no reason to
+     * attempt, since the page would look like an ordinary share view.
+     *
+     * A 404 is `'unknown'` for a different reason: the wheel is gone, which the
+     * snapshot listener reports on its own and in more detail. Answering
+     * `'not-editor'` would race it and put "that edit link isn't valid" on
+     * screen for a wheel that simply no longer exists.
+     */
+    async verifyEditor(
+      shareId: string,
+      editToken: string,
+    ): Promise<'editor' | 'not-editor' | 'unknown'> {
+      try {
+        await send(path(shareId, 'editor'), { method: 'GET', token: editToken })
+        return 'editor'
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error
+        return error.status === 401 || error.status === 403
+          ? 'not-editor'
+          : 'unknown'
+      }
+    },
+
     /** `POST /wheels` — create. The only other time a raw token is emitted. */
     async createWheel(input: { title?: string } = {}): Promise<CreatedWheel> {
       const { body } = await send(path(), { method: 'POST', body: input })
