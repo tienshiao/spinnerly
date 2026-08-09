@@ -18,5 +18,20 @@ import { WheelPage } from './wheel-page'
 export default async function Page({ params }: PageProps<'/w/[shareId]'>) {
   const { shareId } = await params
 
-  return <WheelPage shareId={shareId} />
+  /**
+   * Keyed on `shareId`, which is a correctness point rather than a hint.
+   *
+   * Duplicating a wheel navigates with `router.push` inside this same route
+   * segment, so without a key React keeps the component instance and every
+   * piece of local state in it — and `copyableOptions` in lib/wheels/store.ts
+   * **preserves option ids** through a fork, so the Picked badges from the
+   * source wheel would land on the copy's identical ids. The rotation, the
+   * notice strip and the preview toggle are facts about the wheel that was left
+   * behind in exactly the same way.
+   *
+   * `useWheelSession` still resets its own pending entries on a `shareId`
+   * change, and should: it is a hook, and it cannot assume its caller was
+   * remounted.
+   */
+  return <WheelPage key={shareId} shareId={shareId} />
 }

@@ -10,6 +10,7 @@ import {
   PENDING_SUGGESTIONS_MAX,
   SUGGESTION_LABEL_MAX,
   TITLE_MAX,
+  toStoredForm,
   validateNewWheelTitle,
   validateOptionLabel,
   validateSuggestionLabel,
@@ -442,6 +443,70 @@ describe('countCharacters', () => {
     const emoji = CHAR.emoji.repeat(OPTION_LABEL_MAX)
     expect(emoji.length).toBe(OPTION_LABEL_MAX * 2)
     expect(countCharacters(emoji)).toBe(OPTION_LABEL_MAX)
+  })
+})
+
+/**
+ * The client's half of the bargain `countCharacters` starts. Counting the same
+ * unit as the server is not enough if the two count different strings: the
+ * server measures after this, so a client measuring before it refuses labels
+ * that were always going to be accepted.
+ */
+describe('toStoredForm', () => {
+  it.each([
+    {
+      label: 'composes a decomposed accent',
+      value: `Cafe${CHAR.combiningAcute}`,
+      want: 'Café',
+    },
+    { label: 'trims the ends', value: '  Tacos  ', want: 'Tacos' },
+    {
+      label: 'collapses an internal run',
+      value: 'Deep  dish',
+      want: 'Deep dish',
+    },
+    {
+      label: 'collapses NBSP',
+      value: `Deep${CHAR.nbsp}dish`,
+      want: 'Deep dish',
+    },
+    {
+      label: 'collapses ZWSP to a space',
+      value: `a${CHAR.zwsp}b`,
+      want: 'a b',
+    },
+    {
+      label: 'leaves a ZWJ sequence alone',
+      value: `a${CHAR.zwj}b`,
+      want: `a${CHAR.zwj}b`,
+    },
+  ])('$label', ({ value, want }) => {
+    expect(toStoredForm(value)).toBe(want)
+  })
+
+  /** Exactly what the validator does to the same string, and the reason this is
+   *  exported rather than reimplemented in the two components that need it. */
+  it('agrees with the validator on what will be stored', () => {
+    const raw = `  Caf${'e' + CHAR.combiningAcute}${CHAR.nbsp}${CHAR.nbsp}bar  `
+    expect(toStoredForm(raw)).toBe(validateOptionLabel(raw))
+  })
+
+  /**
+   * Not a validator, and named so it cannot be mistaken for one. It composes and
+   * collapses; it does not reject, so a route calling this instead of
+   * `validateOptionLabel` would store a control character rather than refusing
+   * it. The `\n` becomes a space by way of `collapseWhitespace`, which is why
+   * the BELL is the one asserted on.
+   */
+  it('rejects nothing, including what the validator refuses', () => {
+    expect(toStoredForm(`Tacos${CHAR.bell}`)).toBe(`Tacos${CHAR.bell}`)
+    expect(refusal(() => validateOptionLabel(`Tacos${CHAR.bell}`))).toEqual({
+      status: 400,
+      code: 'invalid_label',
+    })
+    expect(toStoredForm('a'.repeat(OPTION_LABEL_MAX + 1))).toHaveLength(
+      OPTION_LABEL_MAX + 1,
+    )
   })
 })
 
