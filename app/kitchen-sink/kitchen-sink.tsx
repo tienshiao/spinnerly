@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Toaster } from '@/components/ui/sonner'
+import { WheelDemo } from './wheel-demo'
 import {
   Dialog,
   DialogClose,
@@ -181,6 +182,16 @@ export function KitchenSink() {
         <Row label="link">
           <a href="#top">An inline link at accent-700</a>
         </Row>
+      </Section>
+
+      {/*
+        Not a shadcn primitive, and the only thing on this page that is not.
+        It is here because a 4.3-second easing curve is the one part of TASK-16
+        that no assertion can check — the tests prove the wheel lands on the
+        right wedge, not that getting there looks like a spin.
+      */}
+      <Section title="Wheel">
+        <WheelDemo />
       </Section>
 
       <Toaster />
