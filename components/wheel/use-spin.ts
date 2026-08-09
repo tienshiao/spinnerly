@@ -117,6 +117,28 @@ export type SpinState = {
   rotation: number
   spinning: boolean
   result: SpinResult | null
+  /**
+   * Every option this browser has landed on, by id — the Options panel's
+   * "Picked" badge.
+   *
+   * Design doc decision 15 makes it local-only: no field, no endpoint, gone on
+   * refresh. It lives here rather than in the page because this is the only
+   * code that knows a spin landed. Deriving it from `result` in an effect would
+   * be state copied from state, a render behind, and refused by
+   * `react-hooks/set-state-in-effect`.
+   *
+   * Keyed by id, which costs one case: landing on an option whose optimistic
+   * row has not reconciled yet records a `local:` id, so the badge is lost when
+   * the real id arrives. Keying by label instead would badge both rows of a
+   * wheel holding a duplicate label — a permanent wrong answer in place of a
+   * transient missing one.
+   *
+   * It accumulates for the life of the hook and is never cleared: a second
+   * wheel is a different page, and `app/w/[shareId]/page.tsx` keys the whole
+   * tree on `shareId` so that a fork — which **preserves option ids** — cannot
+   * arrive with its options already badged.
+   */
+  picked: ReadonlySet<string>
   /** Ready for the `transition` CSS property. */
   transition: string
   /** False while spinning and below two options. AC 6. */
@@ -152,6 +174,13 @@ export type PickIndex = (count: number) => number
 /** A wheel needs two options before spinning it means anything. */
 const MIN_OPTIONS = 2
 
+/**
+ * The initial `picked` set, shared and never mutated — every addition below
+ * copies. A fresh `new Set()` per hook call would be a new identity on every
+ * render of a wheel nobody has spun.
+ */
+const NOTHING_PICKED: ReadonlySet<string> = new Set()
+
 function randomIndex(count: number): number {
   return Math.floor(Math.random() * count)
 }
@@ -177,6 +206,7 @@ export function useSpin(
   const [rotation, setRotation] = useState(0)
   const [spinning, setSpinning] = useState(false)
   const [result, setResult] = useState<SpinResult | null>(null)
+  const [picked, setPicked] = useState<ReadonlySet<string>>(NOTHING_PICKED)
   /** Whether the spin in flight is animating. Fixed at spin start. */
   const [animated, setAnimated] = useState(false)
   const reducedMotion = useReducedMotion()
@@ -272,6 +302,20 @@ export function useSpin(
          * correct — show it, and let the group spin again.
          */
         setResult({ index, option: snapshot[index] })
+
+        /**
+         * The badge, recorded from the same snapshot and the same index as the
+         * result — so an option removed mid-spin is badged exactly as it is
+         * announced, rather than the two disagreeing about what was landed on.
+         *
+         * Returns the identical set when the id is already in it, so spinning
+         * onto the same option twice re-renders nothing.
+         */
+        setPicked((current) => {
+          const id = snapshot[index].id
+          if (current.has(id)) return current
+          return new Set(current).add(id)
+        })
       },
       reducedMotion ? REDUCED_MOTION_SETTLE_MS : SPIN_SETTLE_MS,
     )
@@ -293,6 +337,7 @@ export function useSpin(
     rotation,
     spinning,
     result,
+    picked,
     /**
      * No transition when not spinning, so the wheel holds where it landed, and
      * none under reduced motion, so the rotation applies as a jump to the

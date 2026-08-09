@@ -3,7 +3,11 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { cn } from '@/lib/utils'
-import { countCharacters, TITLE_MAX } from '@/lib/wheels/validation'
+import {
+  countCharacters,
+  TITLE_MAX,
+  toStoredForm,
+} from '@/lib/wheels/validation'
 
 /**
  * The wheel title in the header: click-to-edit for an editor, static text for a
@@ -48,12 +52,19 @@ export function WheelTitle({
    * The selection is worth having on top of the focus: the field opens holding
    * the existing title, and an editor who just pressed "rename" usually means
    * to replace it rather than append to it.
+   *
+   * Depends on `editable` as well as `editing`, because the input unmounts when
+   * `editable` goes false — the preview toggle the block below is about — while
+   * `editing` stays true. On the way back the field remounts with the draft
+   * intact and `editing` never changed, so on `[editing]` alone the effect would
+   * not re-run and the editor would be returned to a field that is neither
+   * focused nor selected. Every word above applies to that remount too.
    */
   useEffect(() => {
-    if (!editing) return
+    if (!editing || !editable) return
     inputRef.current?.focus()
     inputRef.current?.select()
-  }, [editing])
+  }, [editing, editable])
 
   /**
    * `editable` is checked before `editing` rather than being synchronised into
@@ -94,8 +105,15 @@ export function WheelTitle({
     )
   }
 
-  const trimmed = draft.trim()
-  const tooLong = countCharacters(trimmed) > TITLE_MAX
+  /**
+   * Measured, compared and sent as the server will store it. `validateText`
+   * normalises to NFC and collapses whitespace before counting, so a raw count
+   * refuses a 80-character title holding a decomposed `é` that the server would
+   * have taken — and an "unchanged" title that differs from the stored one only
+   * in an encoding nobody can see would be sent as an edit.
+   */
+  const proposed = toStoredForm(draft)
+  const tooLong = countCharacters(proposed) > TITLE_MAX
 
   /**
    * Commit, or don't, and be clear about which.
@@ -111,9 +129,9 @@ export function WheelTitle({
     if (tooLong) return
 
     setEditing(false)
-    if (trimmed === '' || trimmed === title) return
+    if (proposed === '' || proposed === title) return
 
-    void onRename(trimmed).catch((error: unknown) => {
+    void onRename(proposed).catch((error: unknown) => {
       onError(
         error instanceof Error
           ? error.message

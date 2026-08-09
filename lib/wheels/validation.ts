@@ -191,6 +191,28 @@ function collapseWhitespace(value: string): string {
 }
 
 /**
+ * What the server will store for `value`, without validating it.
+ *
+ * Exported for the client, and it is the other half of `countCharacters`'s
+ * bargain. Counting the same *unit* as the server is not enough if the two count
+ * different *strings*: `validateText` measures after `normalize('NFC')` and
+ * `collapseWhitespace`, so a 60-code-point label holding a decomposed `é`
+ * (e + U+0301) — which is what a Mac produces — or an internal double space
+ * counts 61 raw and 60 stored. A client counting the raw draft refuses a label
+ * the server would have taken, which is the same client/server disagreement this
+ * module's header raises about `value.length`, arrived at from the other side.
+ *
+ * Deliberately not a validator and deliberately not named like one: it enforces
+ * nothing, and a route must still call `validateOptionLabel` on what arrives.
+ * Send this rather than the raw draft, though — the server stores this either
+ * way, so anything else makes an optimistic row show a label the snapshot then
+ * quietly changes.
+ */
+export function toStoredForm(value: string): string {
+  return collapseWhitespace(value.normalize('NFC'))
+}
+
+/**
  * The number of characters in `value`, counted in Unicode code points.
  *
  * Exported for the client, which has to measure a label the same way the server

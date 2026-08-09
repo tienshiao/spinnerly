@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -24,6 +31,8 @@ import type { WheelApi } from '@/lib/wheels/api-client'
 const SHARE_ID = 'aBcDeFgHiJkLmNoPqRsT'
 const TOKEN = 'K3n8x_Qw-2bT4vZ1'
 const NEW_ID = 'zYxWvUtSrQpOnMlKjIhG'
+/** The id `POST /options` answers with, and the one the snapshot then carries. */
+const ADDED_ID = 'o3'
 
 type Recorded = {
   path: string
@@ -99,6 +108,20 @@ function fakeApi(verdict: Verdict | Promise<Verdict> = 'editor') {
     updateWheel: vi.fn(() =>
       Promise.resolve({ updatedAt: new Date('2026-08-01T10:00:01.000Z') }),
     ),
+    addOption: vi.fn((_shareId: string, input: { label: string }) =>
+      Promise.resolve({
+        option: {
+          id: ADDED_ID,
+          label: input.label,
+          addedAt: null,
+          fromSuggestion: null,
+        },
+        updatedAt: new Date('2026-08-01T10:00:01.000Z'),
+      }),
+    ),
+    removeOption: vi.fn(() =>
+      Promise.resolve({ updatedAt: new Date('2026-08-01T10:00:01.000Z') }),
+    ),
     duplicateWheel: vi.fn(() =>
       Promise.resolve({ shareId: NEW_ID, editToken: 'forked-token' }),
     ),
@@ -108,6 +131,8 @@ function fakeApi(verdict: Verdict | Promise<Verdict> = 'editor') {
     verifyEditor: ReturnType<typeof vi.fn>
     updateWheel: ReturnType<typeof vi.fn>
     duplicateWheel: ReturnType<typeof vi.fn>
+    addOption: ReturnType<typeof vi.fn>
+    removeOption: ReturnType<typeof vi.fn>
   }
 }
 
@@ -393,6 +418,10 @@ describe('previewing as a viewer', () => {
     expect(screen.getByText('Viewer')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /spin the wheel/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /rename wheel/i })).toBeNull()
+    // The panel is handed the previewed role rather than `isEditor`, so the
+    // preview is a view of the whole page and not of the header alone.
+    expect(screen.queryByRole('textbox', { name: 'Add an option' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /remove tacos/i })).toBeNull()
 
     await user.click(screen.getByRole('button', { name: /back to editing/i }))
 
@@ -451,6 +480,97 @@ describe('previewing as a viewer', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+/**
+ * The two claims the Options panel cannot make on its own, because both are
+ * about what happens between a click and a snapshot. The panel's own suite
+ * (./options-panel.test.tsx) renders it from props; these drive the write
+ * client and the listener.
+ */
+describe('editing the options', () => {
+  /** Scoped, because the wheel beside the panel draws the same labels as SVG
+   *  text — an unscoped `getAllByText` counts each option twice. */
+  function optionRows() {
+    return within(screen.getByRole('list', { name: 'Options on the wheel' }))
+  }
+
+  /**
+   * AC 4, in both halves. The row has to be there before the snapshot — that is
+   * the whole of the optimistic layer — and there has to be exactly one of it
+   * afterwards, which is the part that breaks when an entry is retired on the
+   * HTTP response instead of on the snapshot that carries it.
+   */
+  it('shows an added option immediately and reconciles to a single row', async () => {
+    setHash(`#e=${TOKEN}`)
+    const api = fakeApi('editor')
+    const user = userEvent.setup()
+
+    await mount(api)
+    await user.type(
+      screen.getByRole('textbox', { name: 'Add an option' }),
+      'Pho{Enter}',
+    )
+
+    expect(api.addOption).toHaveBeenCalledWith(
+      SHARE_ID,
+      { label: 'Pho' },
+      TOKEN,
+    )
+    expect(
+      optionRows().getAllByText('Pho'),
+      'the optimistic row, before any snapshot has carried it',
+    ).toHaveLength(1)
+
+    deliver([
+      { id: 'o1', label: 'Tacos' },
+      { id: 'o2', label: 'Ramen' },
+      { id: ADDED_ID, label: 'Pho' },
+    ])
+
+    await waitFor(() =>
+      expect(optionRows().getAllByText('Pho')).toHaveLength(1),
+    )
+  })
+
+  /** AC 5. No snapshot is delivered at all: the row goes on the click. */
+  it('removes an option without waiting for a snapshot', async () => {
+    setHash(`#e=${TOKEN}`)
+    const api = fakeApi('editor')
+    const user = userEvent.setup()
+
+    await mount(api)
+    await user.click(screen.getByRole('button', { name: 'Remove Tacos' }))
+
+    expect(api.removeOption).toHaveBeenCalledWith(SHARE_ID, 'o1', TOKEN)
+    expect(optionRows().queryByText('Tacos')).toBeNull()
+    expect(optionRows().getByText('Ramen')).toBeTruthy()
+  })
+
+  /**
+   * A rejected write rolls its row back, and the page — not the panel — is what
+   * tells the user. The row disappearing IS the rollback (see `pendingReducer`),
+   * so without the message an add would simply not happen.
+   */
+  it('rolls back a refused add and explains it', async () => {
+    setHash(`#e=${TOKEN}`)
+    const api = fakeApi('editor')
+    api.addOption.mockRejectedValueOnce(new Error('This wheel is full.'))
+    const user = userEvent.setup()
+
+    await mount(api)
+    await user.type(
+      screen.getByRole('textbox', { name: 'Add an option' }),
+      'Pho{Enter}',
+    )
+
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain(
+        'This wheel is full.',
+      ),
+    )
+    expect(optionRows().queryByText('Pho')).toBeNull()
   })
 })
 

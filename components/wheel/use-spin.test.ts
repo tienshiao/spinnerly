@@ -229,6 +229,89 @@ describe('the result', () => {
   })
 })
 
+/**
+ * The Picked badge's state, which lives here because this is the only code that
+ * knows a spin landed. Decision 15: local to the spinning browser, no field and
+ * no endpoint, gone on refresh — so these are the whole of its behaviour.
+ */
+describe('the picked set', () => {
+  it('is empty until a spin settles', () => {
+    const { result } = renderHook(() => useSpin(OPTIONS, picks(1)))
+
+    expect(result.current.picked.size).toBe(0)
+
+    act(() => result.current.spin())
+    act(() => void vi.advanceTimersByTime(SPIN_SETTLE_MS - 1))
+
+    expect(result.current.picked.size, 'recorded with the result').toBe(0)
+  })
+
+  it('records the option the wheel landed on', () => {
+    const { result } = renderHook(() => useSpin(OPTIONS, picks(1)))
+
+    act(() => result.current.spin())
+    act(() => void vi.advanceTimersByTime(SPIN_SETTLE_MS))
+
+    expect([...result.current.picked]).toEqual([OPTIONS[1].id])
+  })
+
+  it('accumulates across spins and survives a dismissal', () => {
+    const { result, rerender } = renderHook(
+      ({ index }: { index: number }) => useSpin(OPTIONS, picks(index)),
+      { initialProps: { index: 1 } },
+    )
+
+    act(() => result.current.spin())
+    act(() => void vi.advanceTimersByTime(SPIN_SETTLE_MS))
+    act(() => result.current.dismiss())
+
+    expect([...result.current.picked]).toEqual([OPTIONS[1].id])
+
+    rerender({ index: 3 })
+    act(() => result.current.spin())
+    act(() => void vi.advanceTimersByTime(SPIN_SETTLE_MS))
+
+    expect([...result.current.picked]).toEqual([OPTIONS[1].id, OPTIONS[3].id])
+  })
+
+  /**
+   * Landing on the same option twice hands back the identical set, so the
+   * panel — which renders a row per option against this — re-renders nothing.
+   */
+  it('does not change identity when the same option comes up again', () => {
+    const { result } = renderHook(() => useSpin(OPTIONS, picks(2)))
+
+    act(() => result.current.spin())
+    act(() => void vi.advanceTimersByTime(SPIN_SETTLE_MS))
+    const first = result.current.picked
+
+    act(() => result.current.spin())
+    act(() => void vi.advanceTimersByTime(SPIN_SETTLE_MS))
+
+    expect(result.current.picked).toBe(first)
+  })
+
+  /**
+   * Read from the same snapshot and the same index as the result, so the badge
+   * and the announcement cannot disagree. Decision 2 accepts that a spin may
+   * land on an option deleted moments earlier; what it does not accept is the
+   * wheel naming one option and the list badging another.
+   */
+  it('badges what was announced, even if that option has since gone', () => {
+    const { result, rerender } = renderHook(
+      ({ options }: { options: WheelOption[] }) => useSpin(options, picks(3)),
+      { initialProps: { options: OPTIONS } },
+    )
+
+    act(() => result.current.spin())
+    rerender({ options: OPTIONS.slice(0, 2) })
+    act(() => void vi.advanceTimersByTime(SPIN_SETTLE_MS))
+
+    expect(result.current.result?.option).toEqual(OPTIONS[3])
+    expect([...result.current.picked]).toEqual([OPTIONS[3].id])
+  })
+})
+
 describe('the frozen snapshot', () => {
   /**
    * AC 4. The wheel must not reflow when a concurrent editor's write lands

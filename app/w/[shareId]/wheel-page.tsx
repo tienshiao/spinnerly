@@ -13,6 +13,7 @@ import { DEFAULT_TITLE } from '@/lib/wheels/validation'
 import { useEditorRole } from '@/lib/wheels/use-editor-role'
 import { useWheelSession } from '@/lib/wheels/use-wheel-session'
 
+import { OptionsPanel } from './options-panel'
 import { WheelHeader } from './wheel-header'
 
 /**
@@ -353,11 +354,17 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
         </section>
 
         <section className="flex flex-col gap-[22px]">
-          <PanelSlot title="Options" task="TASK-18">
-            {options.length === 0
-              ? 'Nothing on this wheel yet.'
-              : `${options.length} on the wheel.`}
-          </PanelSlot>
+          {/* `options`, not `spin.options`. The freeze is about the picture;
+              see the note on `OptionsPanelProps.options` for what handing the
+              frozen snapshot to the panel would cost. */}
+          <OptionsPanel
+            options={options}
+            role={role}
+            picked={spin.picked}
+            onAdd={session.addOption}
+            onRemove={session.removeOption}
+            onError={onError}
+          />
           <PanelSlot title="Suggestions" task="TASK-19">
             {session.view.suggestions.length === 0
               ? 'No suggestions yet.'
@@ -372,10 +379,10 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
 /**
  * A panel that does not exist yet.
  *
- * TASK-18 and TASK-19 replace these outright. They render the live counts
- * rather than a grey box so the layout is being exercised against real data —
- * a placeholder of fixed height proves nothing about how the column behaves
- * when a wheel has fifty options.
+ * TASK-19 replaces the one that is left. It renders the live count rather than
+ * a grey box so the layout is being exercised against real data — a placeholder
+ * of fixed height proves nothing about how the column behaves when a wheel has
+ * fifty options.
  */
 function PanelSlot({
   title,
