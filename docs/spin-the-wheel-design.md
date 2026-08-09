@@ -119,6 +119,85 @@ routed through an API, the path becomes client → API → Firestore → snapsho
 back. The editor UI _must_ hold optimistic local state or editing will feel
 laggy. This is the single most likely "why does this feel bad" regression.
 
+**Resolved: an optimistic entry retires on the snapshot, not on the response.**
+Holding local state is only half the problem; the other half is knowing when to
+let go of it, and the obvious answer is wrong. Dropping the local row when the
+`201` arrives leaves a window in which the local row is gone and the real one
+has not been delivered yet — the option vanishes and comes back, which on a
+wheel is a slice disappearing mid-render.
+
+Recognising the change takes two kinds of evidence.
+
+**Identity** is the change being visibly there: the option carries the ID the
+`201` returned, the rejected row is gone, the queue row reads accepted. It is
+the earliest possible signal and it can never fire too soon — a row that is
+there _is_ the landing.
+
+**Version** is the second, and it is what makes a negative answer possible.
+Every mutating route reports the `updatedAt` its write stored on the wheel
+document, in an `x-wheel-updated-at` response header (§6). Once a snapshot
+carries an `updatedAt` at or past that value, we are looking at a document that
+already includes our write — so if the thing we added is not in it, it is not on
+its way, it was removed again.
+
+| Mutation          | Retires when                                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| add option        | the options contain the ID the `201` returned, **or** the version caught up                                  |
+| remove option     | the options no longer contain that ID, **or** the version caught up                                          |
+| patch title/flag  | the field equals what we asked for, **or** the version caught up                                             |
+| submit suggestion | the queue contains the ID the `201` returned, **or** the version caught up and the queue has since delivered |
+| reject suggestion | the queue no longer contains that ID, **or** the same                                                        |
+| accept suggestion | an option carries `fromSuggestion` **and** the row reads accepted, **or** the same                           |
+
+Four things about this are not obvious:
+
+- **Accept answers `204`,** so there is no new option ID to wait for.
+  `fromSuggestion` (§4) is the only key available, which makes that field
+  load-bearing for the UI as well as for provenance. Accept also has to wait for
+  _both_ documents — it writes the wheel and the suggestion, they arrive as two
+  independent snapshots, and retiring on the first would let the queue row flip
+  back to pending until the second caught up.
+- **The version is the wheel's, even on the suggestion routes.** That works
+  because every mutating route slides `expiresAt` on the wheel document (§8), so
+  one field versions the whole wheel, subcollection included.
+- **It does not speak for the queue listener,** which is a separate
+  subscription. So a queue mutation that needs the version additionally requires
+  a queue delivery since the write settled — without it an optimistic suggestion
+  row would vanish the moment the wheel caught up and reappear when the queue
+  arrived, which is the same flicker in the other panel.
+- **Reject needs no version at all.** It deletes the row, so every snapshot at
+  or after the commit lacks it and identity is guaranteed to arrive. Submit and
+  accept each have a negative conclusion to reach — a suggestion created and
+  deleted unseen, an option another editor has since removed — and reject does
+  not, so it does not carry the extra evidence or its window.
+- **A snapshot can beat its own HTTP response,** so identity has to come first.
+  A rule phrased as "wait for something _after_ the response" waits for a change
+  nobody is going to make.
+
+**Why a version rather than counting snapshots.** Counting deliveries is the
+cheap version of this and it is subtly wrong in both directions. A delivery that
+arrives after our response can still be a document generated _before_ our
+commit — another write landing in the window just ahead of ours, whose snapshot
+is slower than a full API round trip — and a counter retires against it, showing
+a stale title for a frame. In the other direction a counter can never conclude
+that something is absent because it was deleted rather than because it has not
+arrived, which strands an optimistic row forever: a suggestion submitted and
+rejected inside one round trip may never appear in any snapshot that client
+receives, since Firestore does not promise to deliver every intermediate
+version.
+
+**Consequence for the data model:** `updatedAt` is written as a real timestamp
+computed by the route, not `FieldValue.serverTimestamp()`. A sentinel is
+resolved during the commit, so the route would have nothing to report. The cost
+is that `updatedAt` is the route's wall clock rather than Firestore's — a few
+milliseconds of skew between function instances — which is the same trade
+`expiresAt` and `addedAt` already make (§4). Against our own write the
+comparison is exact, because it is the value we were handed.
+
+Nothing gives up on a settled entry on a timer. A write that succeeded is a
+change that exists, so the optimistic row is the correct thing to draw whether
+or not the listener ever delivers it. What is bounded is the request.
+
 **Cold starts.** The first request after a quiet period will stall by a second
 or two on any serverless platform. Acceptable for suggestions; annoying for the
 first edit. Vercel has no always-warm option comparable to Cloud Run's
@@ -275,11 +354,27 @@ The single source of truth. One document = one listener = one read per update.
     }
   ],
   suggestionsOpen: boolean,   // owner kill switch
-  createdAt: timestamp,
-  updatedAt: timestamp,
+  createdAt: timestamp,       // serverTimestamp
+  updatedAt: timestamp,       // the VERSION — see below
   expiresAt: timestamp        // TTL target; slides forward on activity (§8)
 }
 ```
+
+**`updatedAt` is a version, not a display field**, and it is written by the route
+rather than with `FieldValue.serverTimestamp()`. Every mutating route reports the
+value it stored (§6), and a client compares the `updatedAt` in each snapshot
+against that to decide whether it is looking at a document that already includes
+its own write — which is what the optimistic layer retires on (§3). A sentinel
+resolves during the commit, so a route that used one would have nothing to
+report.
+
+The cost is that this is the route's wall clock rather than Firestore's, so two
+writes from two function instances are ordered by clocks that may differ by a few
+milliseconds. Against a client's own write the comparison is exact, because the
+value came from the response. `expiresAt` and `addedAt` already make the same
+trade, and `expiresAt` is the field the TTL reaper acts on — by some distance the
+more consequential of the two. `createdAt` stays a server timestamp on both
+documents that have one: nothing compares it to a value we returned.
 
 **Why an array, not a subcollection:** atomic reordering, one snapshot listener,
 one document read per live update, trivially under the 1MB limit at any sane
@@ -545,6 +640,30 @@ _editor of wheel A receives 403 on wheel B._
 | `POST`   | `/wheels/{shareId}/suggestions/{id}/accept` | editor | Accept → transaction into `options`                                                |
 | `DELETE` | `/wheels/{shareId}/suggestions/{id}`        | editor | Reject (hard delete)                                                               |
 | `POST`   | `/wheels/{shareId}/spins`                   | editor | _(phase 2)_ Server-authoritative spin                                              |
+
+### Every mutating response reports its version
+
+`x-wheel-updated-at`, an ISO 8601 timestamp with milliseconds: the `updatedAt`
+the write stored on `wheels/{shareId}` (§4). Present on all six mutating routes
+and absent from `POST /wheels/{shareId}/duplicate`, which does not change the
+wheel it names.
+
+A **header** rather than a body, because four of the six answer `204 No Content`
+on purpose — a delete is a `204` whether or not there was anything to delete,
+which is what makes those endpoints safe to call twice — and moving the version
+into a body would mean turning them into `200`s. It is metadata about the write
+rather than a representation of the thing written, so a header is where it
+belongs anyway. Not `Last-Modified`, whose HTTP-date format has one-second
+resolution: two writes inside the same second would be indistinguishable, which
+is exactly the case this exists to resolve.
+
+The header and the stored field have to be the same instant, and the failure
+mode if they diverge is quiet. A client waits for a snapshot to reach the
+reported value, so a header running even a millisecond ahead of what was stored
+would describe a version no snapshot ever carries — every optimistic row on that
+wheel would wait forever, and the symptom would be rows that never clear rather
+than anything resembling a timestamp bug. Asserted across all six routes in
+`app/api/wheels/expiry.emulator.test.ts`.
 
 ### Concurrent editors
 
@@ -839,6 +958,7 @@ scoping separately rather than bolting on.
 | 19  | Local development environment?                 | **Firebase Emulator Suite** — no cloud project, no service account on dev machines, and it makes §5 rules testable (§3)                |
 | 20  | What happens to orphaned subcollections?       | **Each suggestion carries its own `expiresAt`**, set at submit and never slid. Never outlives its wheel; may die under a live one (§8) |
 | 21  | How does an expired-but-unreaped wheel behave? | **As a live wheel** — no route checks `expiresAt`, and any write slides it back out of danger (§8)                                     |
+| 22  | When does an optimistic entry retire?          | **On the snapshot, never on the HTTP response** — by identity, or by the version the route reports in `x-wheel-updated-at` (§3, §6)    |
 
 Decisions 10–16 resolve conflicts between this document and the Claude Design
 prototype in `docs/spin-the-wheel-editor/`. Where the two disagree, this table

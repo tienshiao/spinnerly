@@ -2,6 +2,7 @@ import { type Firestore } from 'firebase-admin/firestore'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { getAdminDb } from '@/lib/firebase/admin'
+import { WHEEL_VERSION_HEADER } from '@/lib/wheels/model'
 import {
   createWheel,
   SUGGESTIONS,
@@ -14,6 +15,7 @@ import { PATCH as patchWheel } from './[shareId]/route'
 import { POST as submitSuggestion } from './[shareId]/suggestions/route'
 import { POST as acceptSuggestion } from './[shareId]/suggestions/[suggestionId]/accept/route'
 import { DELETE as rejectSuggestion } from './[shareId]/suggestions/[suggestionId]/route'
+import { POST as duplicateWheel } from './[shareId]/duplicate/route'
 
 /**
  * The two lifecycle invariants that hold design doc section 8 up, neither of
@@ -37,6 +39,15 @@ import { DELETE as rejectSuggestion } from './[shareId]/suggestions/[suggestionI
  * field-configuration API and runs no reaper, and production reaps on a ~24 hour
  * horizon. What is testable is the state of the timestamps the policy acts on,
  * which is the half this codebase controls.
+ *
+ * A third invariant joins them, from the same source. `slidingExpiry` writes
+ * `updatedAt` alongside the two expiries, and that field is the VERSION every
+ * mutating route reports back so a client can ask whether the snapshot it is
+ * looking at already includes its own write (see `WheelVersion` in
+ * lib/wheels/model.ts). It is tested here rather than per route for the same
+ * reason as the other two: what matters is that the set is complete, and a
+ * route added later that forgot to report its version is invisible to a suite
+ * organised per route.
  */
 
 let db: Firestore
@@ -333,4 +344,123 @@ describe('a suggestion never outlives its wheel', () => {
       }
     },
   )
+})
+
+/**
+ * The version every mutating route reports, and the one way it can be wrong.
+ *
+ * The header and the stored field have to be the same instant. A client retires
+ * its optimistic row when a snapshot's `updatedAt` reaches the value the route
+ * handed back, so a header that ran even a millisecond AHEAD of what was stored
+ * would describe a version no snapshot ever carries — every optimistic entry on
+ * that wheel would wait for it forever, and the symptom would be rows that
+ * never clear rather than anything that looks like a timestamp bug.
+ *
+ * That is also why `updatedAt` is a real `Date` rather than
+ * `FieldValue.serverTimestamp()`: a sentinel is resolved during the commit and
+ * the route would have nothing to report. See `writeVersion` in
+ * lib/wheels/store.ts.
+ */
+describe('the version every write reports', () => {
+  async function updatedAtOf(shareId: string): Promise<number> {
+    const snapshot = await db.collection(WHEELS).doc(shareId).get()
+    return snapshot.get('updatedAt')?.toDate().getTime() as number
+  }
+
+  it.each(MUTATIONS)('$label reports what it stored', async ({ run }) => {
+    const seeded = await seed()
+
+    const response = await run(seeded)
+    const reported = response.headers.get(WHEEL_VERSION_HEADER)
+
+    expect(
+      reported,
+      `${response.status} carried no ${WHEEL_VERSION_HEADER}`,
+    ).not.toBeNull()
+    expect(new Date(reported ?? '').getTime()).toBe(
+      await updatedAtOf(seeded.shareId),
+    )
+  })
+
+  it.each(MUTATIONS)(
+    '$label reports a version that moves forward',
+    async ({ run }) => {
+      const seeded = await seed()
+      const before = await updatedAtOf(seeded.shareId)
+
+      const reported = (await run(seeded)).headers.get(WHEEL_VERSION_HEADER)
+
+      // Greater, not merely different: a version that could go backwards would
+      // let a snapshot from before the write satisfy the comparison.
+      expect(new Date(reported ?? '').getTime()).toBeGreaterThan(before)
+    },
+  )
+
+  /**
+   * The write that stores nothing, and the reason the table above cannot catch
+   * it: every row seeds a fresh PENDING suggestion, so no case in it ever takes
+   * the idempotent path.
+   *
+   * A second accept writes nothing at all — not even the expiry slide, because
+   * a second click is not activity. A version computed before the transaction
+   * would therefore be strictly AHEAD of what is stored, which is the one shape
+   * this header must never have: it describes a state no snapshot ever carries,
+   * so every optimistic row on the wheel waits for it forever. The honest
+   * answer is the version already on the document.
+   */
+  it('reports the stored version when a second accept writes nothing', async () => {
+    const { shareId, editToken, suggestionId } = await seed()
+    const accept = () =>
+      acceptSuggestion(
+        request(
+          `/api/wheels/${shareId}/suggestions/${suggestionId}/accept`,
+          'POST',
+          editToken,
+        ),
+        {
+          params: Promise.resolve({ shareId, suggestionId }),
+        } as RouteContext<'/api/wheels/[shareId]/suggestions/[suggestionId]/accept'>,
+      )
+
+    await accept()
+    const afterFirst = await updatedAtOf(shareId)
+
+    const second = await accept()
+
+    expect(second.status).toBe(204)
+    expect(
+      await updatedAtOf(shareId),
+      'the second accept was supposed to write nothing',
+    ).toBe(afterFirst)
+
+    const reported = second.headers.get(WHEEL_VERSION_HEADER)
+    expect(reported, 'no version on the idempotent accept').not.toBeNull()
+    expect(
+      new Date(reported ?? '').getTime(),
+      'the header ran ahead of the document, so no snapshot can ever satisfy it',
+    ).toBe(afterFirst)
+  })
+
+  /**
+   * `POST /duplicate` is absent from the table for the same reason it is absent
+   * from the expiry cases: it does not mutate the wheel it names. It has no
+   * version to report because nothing about the source changed, and a client
+   * has nothing to reconcile — the result is a different wheel and a
+   * navigation.
+   */
+  it('is not reported by the one write that changes no existing wheel', async () => {
+    const { shareId } = await seed()
+    const before = await updatedAtOf(shareId)
+
+    const response = await duplicateWheel(
+      request(`/api/wheels/${shareId}/duplicate`, 'POST'),
+      {
+        params: Promise.resolve({ shareId }),
+      } as RouteContext<'/api/wheels/[shareId]/duplicate'>,
+    )
+
+    expect(response.status).toBe(201)
+    expect(response.headers.get(WHEEL_VERSION_HEADER)).toBeNull()
+    expect(await updatedAtOf(shareId)).toBe(before)
+  })
 })

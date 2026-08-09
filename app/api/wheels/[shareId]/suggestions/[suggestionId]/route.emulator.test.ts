@@ -75,7 +75,7 @@ async function seed() {
     { title: 'Lunch Friday' },
     db,
   )
-  const suggestion = await submitSuggestion(shareId, { label: 'Tacos' }, db)
+  const { suggestion } = await submitSuggestion(shareId, { label: 'Tacos' }, db)
 
   return { shareId, editToken, suggestionId: suggestion.id }
 }
@@ -166,7 +166,11 @@ describe('rejecting', () => {
 
   it('leaves the wheel’s other suggestions alone', async () => {
     const { shareId, editToken, suggestionId } = await seed()
-    const keep = await submitSuggestion(shareId, { label: 'Ramen' }, db)
+    const { suggestion: keep } = await submitSuggestion(
+      shareId,
+      { label: 'Ramen' },
+      db,
+    )
 
     await run(shareId, suggestionId, editToken)
 

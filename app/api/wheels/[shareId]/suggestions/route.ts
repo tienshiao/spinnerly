@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { domainCheck, parseBody } from '@/lib/wheels/request'
+import { domainCheck, parseBody, writeHeaders } from '@/lib/wheels/request'
 import { EditorAuthError, submitSuggestion } from '@/lib/wheels/store'
 import {
   validateSuggestionLabel,
@@ -75,7 +75,9 @@ export async function POST(
 
     // `shareId` from the path, as everywhere else — see the confused-deputy
     // note in store.ts.
-    const suggestion = await submitSuggestion(shareId, { label })
+    const { suggestion, updatedAt } = await submitSuggestion(shareId, {
+      label,
+    })
 
     return Response.json(
       {
@@ -89,7 +91,7 @@ export async function POST(
       },
       {
         status: 201,
-        headers: { 'cache-control': 'no-store' },
+        headers: writeHeaders({ updatedAt }),
       },
     )
   } catch (error) {

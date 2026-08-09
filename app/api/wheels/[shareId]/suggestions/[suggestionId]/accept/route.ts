@@ -1,3 +1,4 @@
+import { writeHeaders } from '@/lib/wheels/request'
 import {
   acceptSuggestion,
   assertEditor,
@@ -51,7 +52,7 @@ export async function POST(
     // shape every client has to branch on for no gain: the wheel is a single
     // document with a single listener, so the new option arrives there either
     // way (design doc section 4).
-    await acceptSuggestion(shareId, suggestionId)
+    const version = await acceptSuggestion(shareId, suggestionId)
 
     // 204 on the second call as much as the first. Accepting twice is what a
     // double-click and a retried request both look like, and answering an error
@@ -59,7 +60,7 @@ export async function POST(
     // same argument the option DELETE makes.
     return new Response(null, {
       status: 204,
-      headers: { 'cache-control': 'no-store' },
+      headers: writeHeaders(version),
     })
   } catch (error) {
     if (error instanceof EditorAuthError) return error.toResponse()

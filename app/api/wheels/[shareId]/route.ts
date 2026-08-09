@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { domainCheck, parseBody } from '@/lib/wheels/request'
+import { domainCheck, parseBody, writeHeaders } from '@/lib/wheels/request'
 import {
   assertEditor,
   EditorAuthError,
@@ -105,11 +105,11 @@ export async function PATCH(
       )
     }
 
-    await updateWheel(shareId, patch)
+    const version = await updateWheel(shareId, patch)
 
     return new Response(null, {
       status: 204,
-      headers: { 'cache-control': 'no-store' },
+      headers: writeHeaders(version),
     })
   } catch (error) {
     if (error instanceof EditorAuthError) return error.toResponse()

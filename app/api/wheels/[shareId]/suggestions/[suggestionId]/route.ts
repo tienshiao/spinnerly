@@ -1,3 +1,4 @@
+import { writeHeaders } from '@/lib/wheels/request'
 import {
   assertEditor,
   EditorAuthError,
@@ -36,7 +37,7 @@ export async function DELETE(
     // confused-deputy note in store.ts.
     await assertEditor(shareId, request)
 
-    await rejectSuggestion(shareId, suggestionId)
+    const version = await rejectSuggestion(shareId, suggestionId)
 
     // 204 whether or not a document was there to delete. A suggestion that is
     // already gone is the normal outcome of a retried request or of two editors
@@ -44,7 +45,7 @@ export async function DELETE(
     // that did exactly what was asked.
     return new Response(null, {
       status: 204,
-      headers: { 'cache-control': 'no-store' },
+      headers: writeHeaders(version),
     })
   } catch (error) {
     if (error instanceof EditorAuthError) return error.toResponse()

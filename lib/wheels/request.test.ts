@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { domainCheck, parseBody, readJsonObject } from './request'
+import { WHEEL_VERSION_HEADER } from './model'
+import { domainCheck, parseBody, readJsonObject, writeHeaders } from './request'
 import {
   validateOptionLabel,
   validateTitle,
@@ -377,4 +378,43 @@ describe('domainCheck', () => {
       await parseRefusal(post(JSON.stringify({ label: '' })), schema),
     ).toEqual({ status: 400, code: 'empty_label' })
   })
+})
+
+describe('writeHeaders', () => {
+  const version = new Date('2026-08-01T10:00:01.234Z')
+
+  it('reports the version as ISO 8601 with milliseconds', () => {
+    // Milliseconds are the resolution the whole mechanism turns on: two writes
+    // inside one second are exactly the case a version has to tell apart, which
+    // is why this is not `Last-Modified`.
+    expect(writeHeaders({ updatedAt: version })[WHEEL_VERSION_HEADER]).toBe(
+      '2026-08-01T10:00:01.234Z',
+    )
+  })
+
+  /**
+   * The one shape this header must never have. A version that was not stored
+   * describes a state no snapshot ever carries, so every optimistic row on that
+   * wheel waits for it forever — and the symptom is rows that never clear
+   * rather than anything resembling a timestamp bug. The route that has nothing
+   * to report is the idempotent second accept, which writes nothing at all.
+   */
+  it('omits the header entirely rather than inventing a version', () => {
+    const headers = writeHeaders({ updatedAt: null })
+
+    expect(WHEEL_VERSION_HEADER in headers).toBe(false)
+    expect(Object.keys(headers)).toEqual(['cache-control'])
+  })
+
+  it.each([
+    { label: 'a version', updatedAt: version },
+    { label: 'no version', updatedAt: null },
+  ])(
+    'keeps the response out of every shared cache with $label',
+    ({ updatedAt }) => {
+      // These bodies are either a bearer capability or a statement about a
+      // document that is about to change again. Neither may be cached.
+      expect(writeHeaders({ updatedAt })['cache-control']).toBe('no-store')
+    },
+  )
 })
