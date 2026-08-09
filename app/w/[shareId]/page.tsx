@@ -1,24 +1,22 @@
+import { WheelPage } from './wheel-page'
+
 /**
- * Placeholder wheel page. TASK-17 builds the real shell.
+ * `/w/{shareId}` — the wheel, for both roles.
  *
- * Note for whoever picks that up: this page is server-rendered so the OG
- * metadata in TASK-23 can hang off it, but the *editor* view cannot be. The
- * edit token lives in the URL fragment (`#e=...`), which browsers never send to
- * the server, so role resolution has to happen in a client component reading
- * `location.hash` on mount. See design doc section 2.
+ * A server component that renders one client component and nothing else, and
+ * the split is load-bearing rather than habit. This half stays on the server so
+ * TASK-23 can hang Open Graph metadata off it — an unfurled share link is how
+ * most people meet a wheel, and metadata generated in the browser arrives long
+ * after Slack has stopped reading.
+ *
+ * The other half cannot be here. Role comes from the edit token in the URL
+ * fragment (design doc section 2), which browsers never send to a server, so
+ * every decision that depends on it happens in ./wheel-page.tsx after mount.
+ * Nothing role-dependent may move up into this file: it would be rendered for
+ * the wrong role and then corrected, which is the flash AC 5 forbids.
  */
-export default async function WheelPage({ params }: PageProps<'/w/[shareId]'>) {
+export default async function Page({ params }: PageProps<'/w/[shareId]'>) {
   const { shareId } = await params
 
-  return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-4 p-10">
-      <h1 className="text-3xl font-bold tracking-tight">Wheel</h1>
-      <p className="text-gray-600">
-        Share ID: <code className="font-mono">{shareId}</code>
-      </p>
-      <p className="text-sm text-gray-500">
-        Scaffold only — see TASK-17 for the real page shell.
-      </p>
-    </main>
-  )
+  return <WheelPage shareId={shareId} />
 }

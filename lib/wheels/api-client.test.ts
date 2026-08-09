@@ -149,6 +149,75 @@ const bodyOf = (call: Call): unknown =>
     ? undefined
     : JSON.parse(String(call.init.body))
 
+/**
+ * The one read, and the one method that answers a refusal rather than throwing
+ * it. Deliberately absent from `everyCall` for that reason: the cross-cutting
+ * blocks below all assert that a non-2xx rejects, which for this method would
+ * be asserting the opposite of its contract.
+ */
+describe('verifyEditor', () => {
+  it('asks the editor endpoint, carrying the token as a bearer', async () => {
+    const { api, calls } = clientReturning(noContent(null))
+
+    await api.verifyEditor(SHARE_ID, TOKEN)
+
+    expect(calls[0].url).toBe(`/api/wheels/${SHARE_ID}/editor`)
+    expect(calls[0].init.method).toBe('GET')
+    expect(header(calls[0], 'authorization')).toBe(`Bearer ${TOKEN}`)
+    // The token is in a header and nowhere else, exactly as on the five write
+    // endpoints — a GET is the easiest place to reach for a query string.
+    expect(calls[0].url).not.toContain(TOKEN)
+  })
+
+  it('answers editor on a 204', async () => {
+    const { api } = clientReturning(noContent(null))
+
+    expect(await api.verifyEditor(SHARE_ID, TOKEN)).toBe('editor')
+  })
+
+  it.each([
+    { label: '401 missing_token', status: 401, code: 'missing_token' },
+    { label: '403 not_editor', status: 403, code: 'not_editor' },
+  ])('answers not-editor on $label', async ({ status, code }) => {
+    const { api } = clientReturning(json({ error: code }, status))
+
+    expect(await api.verifyEditor(SHARE_ID, TOKEN)).toBe('not-editor')
+  })
+
+  /**
+   * Everything else is `'unknown'`, and the distinction is the whole reason
+   * this method returns a value instead of a boolean.
+   *
+   * A boolean would have to fold "the server says no" together with "the server
+   * did not answer", and the caller acts on those in opposite directions:
+   * ./use-editor-role.ts demotes on the first and keeps the editor role on the
+   * second, because a dropped connection is evidence about the network and none
+   * about the token.
+   *
+   * The 404 is `'unknown'` for its own reason — the wheel is gone, which the
+   * snapshot listener reports on its own and in more detail. Calling it
+   * `not-editor` would race that and put "your edit link isn't valid" on screen
+   * for a wheel that simply no longer exists.
+   */
+  it.each([
+    { label: 'a 404, because the wheel is gone', status: 404 },
+    { label: 'a 500 from the route', status: 500 },
+    { label: 'a 502 from the platform', status: 502 },
+  ])('answers unknown on $label', async ({ status }) => {
+    const { api } = clientReturning(json({ error: 'whatever' }, status))
+
+    expect(await api.verifyEditor(SHARE_ID, TOKEN)).toBe('unknown')
+  })
+
+  it('answers unknown when the request never reaches a server', async () => {
+    const api = createWheelApi({
+      fetch: () => Promise.reject(new TypeError('Failed to fetch')),
+    })
+
+    expect(await api.verifyEditor(SHARE_ID, TOKEN)).toBe('unknown')
+  })
+})
+
 describe('request shapes', () => {
   it.each([
     {
@@ -228,6 +297,11 @@ describe('request shapes', () => {
       'removeOption',
       'submitSuggestion',
       'updateWheel',
+      // Not in the section 6 table as originally written. TASK-17 added
+      // `GET /wheels/{shareId}/editor` because the edit page has no other way
+      // to tell a real token from a truncated one — the fragment never reaches
+      // a server and section 5 denies the client every read of `wheelSecrets`.
+      'verifyEditor',
     ])
   })
 

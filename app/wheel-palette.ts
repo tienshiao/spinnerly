@@ -48,6 +48,25 @@ export const INK = [
  *  for `ink` — an unpaired `SLICE` entry would otherwise yield `undefined`. */
 export const PALETTE_LENGTH: typeof INK.length = SLICE.length
 
+/**
+ * An even conic gradient built from palette indices — the brand mark, and the
+ * landing page's decorative discs.
+ *
+ * Goes through `sliceColors` rather than indexing `SLICE` directly. Indexing a
+ * tuple with a plain `number` widens to `string`, so an out-of-range index
+ * would type-check, lint clean, and then emit
+ * `conic-gradient(undefined 0 12.5%, …)` — which the browser discards as an
+ * invalid declaration, leaving a blank transparent disc with no console error
+ * and no build failure. `sliceColors` already wraps for exactly this reason.
+ */
+export function conicFromPalette(indices: readonly number[]): string {
+  const stops = indices.map(
+    (paletteIndex, i) =>
+      `${sliceColors(paletteIndex).fill} 0 ${((i + 1) / indices.length) * 100}%`,
+  )
+  return `conic-gradient(${stops.join(', ')})`
+}
+
 /** Fill and label colour for the option at position `index`, wrapping. */
 export function sliceColors(index: number): { fill: string; ink: string } {
   // Truncate before the modulo: a fractional or NaN index would otherwise pass

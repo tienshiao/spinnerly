@@ -1,7 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { sliceColors } from './wheel-palette'
+import { conicFromPalette, sliceColors } from './wheel-palette'
 import './landing.css'
 
 /**
@@ -46,22 +46,6 @@ const AVATAR_SLICES = [0, 2, 1, 4] as const
 const AMBER_PILL = { background: '#ffe6ab', color: '#6b4a00' }
 const TEAL_PILL = { background: '#d6f5ea', color: '#0d4c3f' }
 const VIOLET_PILL = { background: '#e8e2fb', color: '#3a2a63' }
-
-/** An even-slice conic gradient built from wheel-palette indices.
- *
- * Goes through `sliceColors()` rather than indexing SLICE directly. Indexing a
- * tuple with a plain `number` widens to `string`, so an out-of-range index would
- * type-check, lint clean, and then emit `conic-gradient(undefined 0 12.5%, …)`
- * — which the browser discards as an invalid declaration, leaving a blank
- * transparent disc with no console error and no build failure.
- * `sliceColors()` already wraps and truncates for exactly this reason. */
-function conicFromPalette(indices: readonly number[]): string {
-  const stops = indices.map(
-    (paletteIndex, i) =>
-      `${sliceColors(paletteIndex).fill} 0 ${((i + 1) / indices.length) * 100}%`,
-  )
-  return `conic-gradient(${stops.join(', ')})`
-}
 
 /* Horizontal gutter, shared by every section so their left edges line up. The
  * prototype's flat 48px leaves no room on a 360px phone. The margin variant is
