@@ -33,6 +33,8 @@ const TOKEN = 'K3n8x_Qw-2bT4vZ1'
 const NEW_ID = 'zYxWvUtSrQpOnMlKjIhG'
 /** The id `POST /options` answers with, and the one the snapshot then carries. */
 const ADDED_ID = 'o3'
+/** The same, for `POST /suggestions`. */
+const SENT_ID = 's9'
 
 type Recorded = {
   path: string
@@ -79,23 +81,45 @@ function listener(suffix: string): Recorded {
   return found[0]
 }
 
-/** Deliver a wheel and an empty queue, which is what "loaded" means here. */
-function deliver(options: { id: string; label: string }[] = []) {
+type QueuedSuggestion = {
+  id: string
+  label: string
+  status?: 'pending' | 'accepted'
+}
+
+/** Deliver a wheel and a queue, which together are what "loaded" means here. */
+function deliver(
+  options: { id: string; label: string; fromSuggestion?: string }[] = [],
+  queue: QueuedSuggestion[] = [],
+  wheel: { suggestionsOpen?: boolean } = {},
+) {
   act(() => {
     listener(SHARE_ID).next({
       exists: () => true,
       data: () => ({
         title: 'Team lunch',
-        suggestionsOpen: true,
+        suggestionsOpen: wheel.suggestionsOpen ?? true,
         updatedAt: new Date('2026-08-01T10:00:00.000Z'),
         options: options.map((option) => ({
           ...option,
           addedAt: null,
-          fromSuggestion: null,
+          fromSuggestion: option.fromSuggestion ?? null,
         })),
       }),
     })
-    listener('suggestions').next({ docs: [] })
+    listener('suggestions').next({
+      docs: queue.map((entry, index) => ({
+        id: entry.id,
+        data: () => ({
+          label: entry.label,
+          status: entry.status ?? 'pending',
+          // Spaced a minute apart so `bySubmissionOrder` puts the queue in the
+          // order it was written here rather than falling back to sorting on id.
+          createdAt: new Date(Date.UTC(2026, 7, 1, 9, index)),
+          expiresAt: null,
+        }),
+      })),
+    })
   })
 }
 
@@ -122,6 +146,18 @@ function fakeApi(verdict: Verdict | Promise<Verdict> = 'editor') {
     removeOption: vi.fn(() =>
       Promise.resolve({ updatedAt: new Date('2026-08-01T10:00:01.000Z') }),
     ),
+    submitSuggestion: vi.fn((_shareId: string, input: { label: string }) =>
+      Promise.resolve({
+        suggestion: { id: SENT_ID, label: input.label, status: 'pending' },
+        updatedAt: new Date('2026-08-01T10:00:01.000Z'),
+      }),
+    ),
+    acceptSuggestion: vi.fn(() =>
+      Promise.resolve({ updatedAt: new Date('2026-08-01T10:00:01.000Z') }),
+    ),
+    rejectSuggestion: vi.fn(() =>
+      Promise.resolve({ updatedAt: new Date('2026-08-01T10:00:01.000Z') }),
+    ),
     duplicateWheel: vi.fn(() =>
       Promise.resolve({ shareId: NEW_ID, editToken: 'forked-token' }),
     ),
@@ -133,6 +169,9 @@ function fakeApi(verdict: Verdict | Promise<Verdict> = 'editor') {
     duplicateWheel: ReturnType<typeof vi.fn>
     addOption: ReturnType<typeof vi.fn>
     removeOption: ReturnType<typeof vi.fn>
+    submitSuggestion: ReturnType<typeof vi.fn>
+    acceptSuggestion: ReturnType<typeof vi.fn>
+    rejectSuggestion: ReturnType<typeof vi.fn>
   }
 }
 
@@ -571,6 +610,157 @@ describe('editing the options', () => {
       ),
     )
     expect(optionRows().queryByText('Pho')).toBeNull()
+  })
+})
+
+/**
+ * The claims the Suggestions panel cannot make on its own, for the same reason
+ * the option ones are here: each is about what happens between a click and a
+ * snapshot, or about a change this client did not make.
+ */
+describe('the suggestions queue', () => {
+  function queueRows() {
+    return within(
+      screen.getByRole('list', { name: 'Suggestions for this wheel' }),
+    )
+  }
+
+  /** The wheel beside the panel draws the same labels as SVG text. */
+  function optionRows() {
+    return within(screen.getByRole('list', { name: 'Options on the wheel' }))
+  }
+
+  /**
+   * AC 3, in the one step it promises. Accept is a transaction over the wheel
+   * document and the suggestion document, and until either snapshot lands the
+   * optimistic layer is the whole of what the editor can see — the option on
+   * the wheel keyed on `fromSuggestion`, and the queue row already reading as
+   * settled.
+   */
+  it('puts an approved suggestion on the wheel before any snapshot confirms it', async () => {
+    setHash(`#e=${TOKEN}`)
+    const api = fakeApi('editor')
+    const user = userEvent.setup()
+
+    render(<WheelPage shareId={SHARE_ID} api={api} />)
+    deliver([{ id: 'o1', label: 'Tacos' }], [{ id: 's1', label: 'Sushi' }])
+    await waitFor(() => expect(screen.getByRole('banner')).toBeTruthy())
+
+    await user.click(screen.getByRole('button', { name: 'Approve Sushi' }))
+
+    expect(api.acceptSuggestion).toHaveBeenCalledWith(SHARE_ID, 's1', TOKEN)
+    expect(
+      optionRows().getAllByText('Sushi'),
+      'the option, before either half of the transaction has been delivered',
+    ).toHaveLength(1)
+    expect(queueRows().getByText('Added')).toBeTruthy()
+
+    // Both halves, as they arrive: the option carrying its provenance, and the
+    // row flipped. Retiring on one alone is what makes the row read pending
+    // again in between.
+    deliver(
+      [
+        { id: 'o1', label: 'Tacos' },
+        { id: ADDED_ID, label: 'Sushi', fromSuggestion: 's1' },
+      ],
+      [{ id: 's1', label: 'Sushi', status: 'accepted' }],
+    )
+
+    await waitFor(() =>
+      expect(
+        optionRows().getAllByText('Sushi'),
+        'the optimistic option and the real one must reconcile to one row',
+      ).toHaveLength(1),
+    )
+  })
+
+  /** AC 4. The row goes on the click; the hard delete is what makes it go everywhere. */
+  it('removes a rejected suggestion without waiting for a snapshot', async () => {
+    setHash(`#e=${TOKEN}`)
+    const api = fakeApi('editor')
+    const user = userEvent.setup()
+
+    render(<WheelPage shareId={SHARE_ID} api={api} />)
+    deliver(
+      [{ id: 'o1', label: 'Tacos' }],
+      [
+        { id: 's1', label: 'Sushi' },
+        { id: 's2', label: 'Pizza' },
+      ],
+    )
+    await waitFor(() => expect(screen.getByRole('banner')).toBeTruthy())
+
+    await user.click(screen.getByRole('button', { name: 'Reject Sushi' }))
+
+    expect(api.rejectSuggestion).toHaveBeenCalledWith(SHARE_ID, 's1', TOKEN)
+    expect(queueRows().queryByText('Sushi')).toBeNull()
+    expect(queueRows().getByText('Pizza')).toBeTruthy()
+  })
+
+  /**
+   * The participant's half. Their own submission is in the public queue from
+   * the click, which is the only acknowledgement the panel gives that does not
+   * depend on a round trip.
+   */
+  it('shows a participant their own suggestion at once', async () => {
+    const api = fakeApi()
+    const user = userEvent.setup()
+
+    await mount(api)
+    await user.type(
+      screen.getByRole('textbox', { name: 'Suggest an option' }),
+      'Sushi{Enter}',
+    )
+
+    expect(api.submitSuggestion).toHaveBeenCalledWith(SHARE_ID, {
+      label: 'Sushi',
+    })
+    expect(queueRows().getByText('Sushi')).toBeTruthy()
+    expect(queueRows().getByText('Waiting')).toBeTruthy()
+  })
+
+  /**
+   * AC 12, stated from the side that proves it: this client never touched the
+   * switch. The kill switch is a field on the wheel document, so a listener is
+   * the whole delivery mechanism and no reload is involved.
+   */
+  it('closes the submit row on a client that only listened', async () => {
+    const api = fakeApi()
+
+    await mount(api)
+    expect(
+      screen.getByRole('textbox', { name: 'Suggest an option' }),
+    ).toBeTruthy()
+
+    deliver([{ id: 'o1', label: 'Tacos' }], [], { suggestionsOpen: false })
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('textbox', { name: 'Suggest an option' }),
+      ).toBeNull(),
+    )
+    expect(screen.getByText(/closed suggestions on this wheel/i)).toBeTruthy()
+  })
+
+  /** And the editor's side of the same write, which flips before it lands. */
+  it('flips the kill switch on the click and patches the wheel', async () => {
+    setHash(`#e=${TOKEN}`)
+    const api = fakeApi('editor')
+    const user = userEvent.setup()
+
+    await mount(api)
+    await user.click(
+      screen.getByRole('switch', { name: 'Accepting suggestions' }),
+    )
+
+    expect(api.updateWheel).toHaveBeenCalledWith(
+      SHARE_ID,
+      { suggestionsOpen: false },
+      TOKEN,
+    )
+    expect(screen.getByRole('switch').getAttribute('aria-checked')).toBe(
+      'false',
+    )
   })
 })
 
