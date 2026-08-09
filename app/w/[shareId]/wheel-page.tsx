@@ -14,6 +14,7 @@ import { useEditorRole } from '@/lib/wheels/use-editor-role'
 import { useWheelSession } from '@/lib/wheels/use-wheel-session'
 
 import { OptionsPanel } from './options-panel'
+import { SuggestionsPanel } from './suggestions-panel'
 import { WheelHeader } from './wheel-header'
 
 /**
@@ -365,46 +366,22 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
             onRemove={session.removeOption}
             onError={onError}
           />
-          <PanelSlot title="Suggestions" task="TASK-19">
-            {session.view.suggestions.length === 0
-              ? 'No suggestions yet.'
-              : `${session.view.suggestions.length} waiting.`}
-          </PanelSlot>
+          {/* `wheel.suggestionsOpen`, which is the PROJECTED value — the
+              optimistic layer has already applied an outstanding toggle, so
+              the switch flips on the click rather than on the snapshot. */}
+          <SuggestionsPanel
+            suggestions={session.view.suggestions}
+            role={role}
+            suggestionsOpen={wheel.suggestionsOpen}
+            savingSuggestionsOpen={session.view.saving.suggestionsOpen}
+            onAccept={session.acceptSuggestion}
+            onReject={session.rejectSuggestion}
+            onSubmit={session.submitSuggestion}
+            onSetSuggestionsOpen={session.setSuggestionsOpen}
+            onError={onError}
+          />
         </section>
       </main>
     </Page>
-  )
-}
-
-/**
- * A panel that does not exist yet.
- *
- * TASK-19 replaces the one that is left. It renders the live count rather than
- * a grey box so the layout is being exercised against real data — a placeholder
- * of fixed height proves nothing about how the column behaves when a wheel has
- * fifty options.
- */
-function PanelSlot({
-  title,
-  task,
-  children,
-}: {
-  title: string
-  task: string
-  children: React.ReactNode
-}) {
-  return (
-    <div
-      className={cn(
-        'border-divider rounded-[var(--radius-lg)] border bg-neutral-100 p-6',
-        'shadow-[var(--shadow-sm)]',
-      )}
-    >
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h2 className="font-heading text-[26px] leading-none">{title}</h2>
-        <span className="text-[13px] text-neutral-600">{task}</span>
-      </div>
-      <p className="text-[15px] text-neutral-700">{children}</p>
-    </div>
   )
 }
