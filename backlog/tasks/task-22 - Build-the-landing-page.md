@@ -4,7 +4,7 @@ title: Wire the landing page call-to-action buttons
 status: To Do
 assignee: []
 created_date: '2026-08-07 08:39'
-updated_date: '2026-08-07 19:31'
+updated_date: '2026-08-09 22:51'
 labels: []
 dependencies:
   - TASK-21
@@ -58,5 +58,17 @@ In prototype order:
 4 is the same action as 2 and needs no extra decision. 1 is the one that was missed: 'Open a wheel' is not 'Make a wheel', and in the prototype it points at the same static Wheel.dc.html as everything else, so the prototype gives no signal about intent. It plausibly means the same thing as 'See a live one', or it is a vestige of a mockup where every link had to go somewhere. Decide whether it creates a wheel, resolves to the same demo destination as 'See a live one', or is dropped from the header.
 
 All four render today as <button type="button"> with no handler, styled through cn(buttonVariants(...)). They are in app/page.tsx and are the only <button> elements on the page, so they are easy to find.
+---
+
+author: @claude
+created: 2026-08-09 22:51
+---
+TASK-21 has shipped the create flow, and it took two of the four landing buttons with it. Both 'Make a wheel' buttons — the hero one and the one on the call-to-action band — are now app/create-wheel-button.tsx, which posts to /api/wheels and navigates to /w/{shareId}#e={editToken}.
+
+So AC 1 and AC 3 here are already true and tested: app/create-wheel-button.test.tsx parses the pushed URL and asserts the token is in the fragment, that the search is empty and that no path segment carries it, and spies on every console method across the flow. It was also checked against real logs — the token appears in neither the Next dev log nor firestore-debug.log.
+
+What is left is AC 2, which is the part that was always the real work: what 'See a live one' points at. It is untouched and still inert, as is the nav's 'Open a wheel' — that one has no agreed destination at all and is worth deciding here too, since 'open' reads as 'open an existing wheel' rather than 'make one'.
+
+Worth flagging for whoever picks this up: a seeded demo wheel is real scope rather than a link. It needs an owner, a policy on whether participants may mutate it, and something to reset it — and note that with suggestions open by default, a public demo wheel is an unattended write endpoint on a link that will be indexed. The alternatives are creating one on demand (which makes the button a second 'Make a wheel' wearing different words) or dropping it. The task already says to settle it rather than leave a dead link; nothing in TASK-21 has made that easier or harder.
 ---
 <!-- COMMENTS:END -->

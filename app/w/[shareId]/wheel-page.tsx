@@ -10,6 +10,7 @@ import { useSpin } from '@/components/wheel/use-spin'
 import { cn } from '@/lib/utils'
 import type { WheelApi } from '@/lib/wheels/api-client'
 import { DEFAULT_TITLE } from '@/lib/wheels/validation'
+import { consumeWheelCreated, markWheelCreated } from '@/lib/wheels/new-wheel'
 import { useEditorRole } from '@/lib/wheels/use-editor-role'
 import { useWheelSession } from '@/lib/wheels/use-wheel-session'
 
@@ -120,11 +121,11 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
    * behind, and would put the message back every time anything else re-rendered
    * after a dismissal.
    *
-   * **A dismissal belongs to the notice it dismissed, and the two sources are
+   * **A dismissal belongs to the notice it dismissed, and the three sources are
    * dismissed differently.** A failure is dismissed by CLEARING it, so the next
    * failure shows even when it carries the same words as the one dismissed
-   * before it. The rejection gets its own flag, because there is nothing to
-   * clear — it stays true for the life of the page.
+   * before it. The other two get their own flags, because there is nothing to
+   * clear — each stays true for the life of the page.
    *
    * One shared `dismissed` boolean is what a previous version had, and it made
    * an unrelated dismissal swallow AC 3's message outright: dismiss a clipboard
@@ -133,24 +134,13 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
    */
   const [failure, setFailure] = useState<string | null>(null)
   const [rejectionDismissed, setRejectionDismissed] = useState(false)
+  const [creationDismissed, setCreationDismissed] = useState(false)
 
   const isEditor = editor.role === 'editor'
   const role = isEditor && !previewing ? 'editor' : 'participant'
 
   const options = session.view.wheel?.options ?? []
   const spin = useSpin(options)
-
-  /**
-   * AC 3: the URL carried a token, the server refused it, and the page has
-   * degraded to the participant view rather than to an error page. The message
-   * names the fragment specifically, because a truncated paste is overwhelmingly
-   * the way this happens and "the part after the #" is the part people drop.
-   */
-  const notice =
-    failure ??
-    (editor.rejected && !rejectionDismissed
-      ? 'That edit link is not valid for this wheel, so you are seeing the shared view. Check you copied the whole link — the part after the # matters.'
-      : null)
 
   const onError = useCallback((message: string) => {
     setFailure(message)
@@ -193,21 +183,34 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
    */
   const duplicate = useCallback(() => {
     setDuplicating(true)
-    void session
-      .duplicate()
-      .then((created) => {
-        // Straight into the new wheel's EDIT url. The fork's token is emitted
-        // exactly once, in this response, and is unrecoverable if dropped.
-        router.push(`/w/${created.shareId}#e=${created.editToken}`)
-      })
-      .catch((error: unknown) => {
+    void session.duplicate().then(
+      (fork) => {
+        /**
+         * Marked exactly as the create flow marks a new wheel, because a fork
+         * is one: `POST /wheels/{shareId}/duplicate` mints its token once, in
+         * this response, and there is no way to reissue it. Without this the
+         * person who lands on the fork — very often a participant, since the
+         * duplicate button is the escape hatch for a wheel whose editor has
+         * vanished — becomes its only editor with nothing having told them the
+         * URL is the key. Before the navigation, so the page it lands on can
+         * find it.
+         */
+        markWheelCreated(fork.shareId)
+        router.push(`/w/${fork.shareId}#e=${fork.editToken}`)
+      },
+      // Second argument rather than a trailing `.catch`, so this cannot fire
+      // for something the success handler threw — see the same note in
+      // app/create-wheel-button.tsx. Saying "could not be duplicated" about a
+      // fork that exists would strand its token.
+      (error: unknown) => {
         setDuplicating(false)
         onError(
           error instanceof Error
             ? error.message
             : 'That wheel could not be duplicated.',
         )
-      })
+      },
+    )
   }, [onError, router, session])
 
   // Both gates. See the note at the top of this file for why neither is
@@ -246,6 +249,84 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
   const wheel = session.view.wheel
   const shareUrl = `${globalThis.location?.origin ?? ''}/w/${shareId}`
 
+  /**
+   * TASK-21 AC 5: did this tab just make this wheel?
+   *
+   * **Below every gate above, and that position is the whole point.** The
+   * signal is one-shot — `consumeWheelCreated` empties the storage slot — so
+   * spending it on a render that cannot show the notice loses the warning
+   * outright. Read at the top of the component it was spent during the loading
+   * render, which meant a wheel whose first snapshot 404'd or errored returned
+   * one of the two branches above, and the reload that then succeeded had
+   * nothing left to find: no warning, on the one page whose URL is the only
+   * key to the wheel. Here it is only reached on the render that draws the
+   * strip.
+   *
+   * A plain call during render rather than a `useState` initializer, now that
+   * it sits after early returns where a hook could not go. Nothing is lost:
+   * the answer is memoised per share ID for the life of the page (see the note
+   * in lib/wheels/new-wheel.ts on React double-invoking initializers), so every
+   * later render — including one caused by a failure showing over this notice —
+   * gets the same answer rather than re-spending the slot.
+   *
+   * It cannot disagree with a server render either. Both gates wait on
+   * something asynchronous, so no render that reaches this line happens before
+   * hydration is over.
+   */
+  const created = consumeWheelCreated(shareId)
+
+  /**
+   * Three sources, in priority order, and the order is the argument for tagging
+   * the notice with its kind rather than reducing it to a string: the dismiss
+   * button has to know which state it is dismissing, and a ternary on
+   * `failure === null` stopped being readable at two.
+   *
+   * - A failure first. It is the newest thing to have happened and the only one
+   *   the user's own action produced.
+   * - Then AC 3's refusal: the URL carried a token and the server would not
+   *   have it, so the page has degraded to the participant view rather than to
+   *   an error page. The message names the fragment specifically, because a
+   *   truncated paste is overwhelmingly the way this happens and "the part
+   *   after the #" is the part people drop.
+   * - Then TASK-21 AC 5's warning, on a wheel this tab has just created.
+   *
+   * Only the first pair can genuinely collide — a wheel created here holds the
+   * token the create response minted, so it cannot also be a refused one. And
+   * because the answer above is remembered rather than re-read, a failure
+   * showing over the warning does not consume it: dismiss the failure and the
+   * warning is still there, which matters when the failure is the copy button
+   * and the warning is about the link they were trying to copy.
+   */
+  type Notice = { kind: 'failure' | 'rejection' | 'created'; message: string }
+
+  const notice: Notice | null =
+    failure !== null
+      ? { kind: 'failure', message: failure }
+      : editor.rejected && !rejectionDismissed
+        ? {
+            kind: 'rejection',
+            message:
+              'That edit link is not valid for this wheel, so you are seeing the shared view. Check you copied the whole link — the part after the # matters.',
+          }
+        : created && !creationDismissed
+          ? {
+              kind: 'created',
+              message:
+                'Bookmark this page before you share it. This URL is your edit key — there are no accounts, so if you lose it there is no way back in. Use Copy share link to send people the view-only version.',
+            }
+          : null
+
+  /**
+   * Clearing the failure rather than flagging it is what lets an identical
+   * message announce itself again the next time it happens. The other two have
+   * nothing to clear.
+   */
+  function dismissNotice(kind: Notice['kind']) {
+    if (kind === 'failure') setFailure(null)
+    else if (kind === 'rejection') setRejectionDismissed(true)
+    else setCreationDismissed(true)
+  }
+
   return (
     <Page>
       <WheelHeader
@@ -256,6 +337,12 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
         onTogglePreview={togglePreview}
         spinning={spin.spinning}
         savingTitle={session.view.saving.title}
+        /* The same signal the notice below is drawn from. A wheel arrives
+           called "Untitled wheel" and naming it is the first thing its creator
+           came here to do, so the field opens on it rather than waiting to be
+           discovered behind a hover state. `WheelTitle` reads this once, on
+           mount, so dismissing the field does not re-open it. */
+        titleStartsInEdit={created && isEditor}
         onRename={session.setTitle}
         onDuplicate={duplicate}
         duplicating={duplicating}
@@ -268,16 +355,12 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
           role="status"
           className="border-accent-300 bg-accent-100 text-accent-800 relative mx-5 mt-4 flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-sm sm:mx-10"
         >
-          <span>{notice}</span>
+          <span>{notice.message}</span>
           <button
             type="button"
-            // Which state to touch follows from which notice is showing, and
-            // `failure` takes precedence above. Clearing the failure rather
-            // than flagging it is what lets an identical message announce
-            // itself again the next time it happens.
-            onClick={() =>
-              failure === null ? setRejectionDismissed(true) : setFailure(null)
-            }
+            onClick={() => {
+              dismissNotice(notice.kind)
+            }}
             className="cursor-pointer text-lg leading-none"
             aria-label="Dismiss this message"
           >
@@ -349,7 +432,7 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
             <p className="max-w-[420px] text-center text-[15px] leading-[1.55] text-neutral-600">
               {previewing
                 ? 'This is what everyone with the share link sees.'
-                : 'Have a look at what is on the wheel, and suggest a spot if something is missing.'}
+                : 'Have a look at what is on the wheel, and suggest an option if something is missing.'}
             </p>
           )}
         </section>

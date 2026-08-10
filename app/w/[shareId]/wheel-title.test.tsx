@@ -62,6 +62,58 @@ describe('opening the field', () => {
   })
 
   /**
+   * `startEditing`, which the page passes on a wheel this tab has just created.
+   *
+   * The field opens focused AND with the title selected, so the first keystroke
+   * replaces "Untitled wheel" rather than appending to it — the same treatment
+   * the rename button gives, for the same reason.
+   */
+  it('opens focused and selected on a wheel this tab just made', () => {
+    renderTitle({ startEditing: true })
+
+    expect(document.activeElement).toBe(field())
+    expect(
+      field().value,
+      'an empty field reads as a cancel to commit(), losing the name it opened on',
+    ).toBe('Lunch')
+    expect(field().selectionStart).toBe(0)
+    expect(field().selectionEnd).toBe('Lunch'.length)
+  })
+
+  /**
+   * Opening the field means a blur happens on every new wheel whose creator
+   * clicks anywhere else, so "opened and ignored" has to be a no-op. A PATCH
+   * here would be a rename nobody made, and it would slide the wheel's expiry
+   * on top of that.
+   */
+  it('sends nothing when the field is opened and left alone', async () => {
+    const user = userEvent.setup()
+    const { props } = renderTitle({ startEditing: true })
+
+    await user.tab()
+
+    expect(props.onRename).not.toHaveBeenCalled()
+  })
+
+  /** Read once, on mount — a dismissal is final for the life of the page. */
+  it('does not re-open once it has been dismissed', async () => {
+    const user = userEvent.setup()
+    renderTitle({ startEditing: true })
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(renameButton()).toBeTruthy()
+  })
+
+  /** A participant has no field to open, whatever the page asks for. */
+  it('opens nothing for a viewer', () => {
+    renderTitle({ editable: false, startEditing: true })
+
+    expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  /**
    * The editor opens the viewer preview mid-rename. `editable` goes false, the
    * input unmounts, `editing` stays true — the component is explicit that the
    * draft is kept for the way back. On the way back the input is a *new* node,
@@ -84,6 +136,56 @@ describe('opening the field', () => {
     expect(field().value, 'the draft survived the preview').toBe('Dinner')
     expect(document.activeElement).toBe(field())
     expect(field().selectionEnd).toBe('Dinner'.length)
+  })
+})
+
+/**
+ * The idle title is the one thing on this page that both roles see, and the
+ * preview toggle swaps between them in place — so any difference in the box it
+ * occupies is a visible jump in the header, not a detail.
+ *
+ * Asserted on classes because jsdom has no layout: `getBoundingClientRect` is
+ * all zeroes here, so there is nothing to measure. The classes are read off the
+ * rendered output and compared to each other rather than to a written-down
+ * list, which is what keeps this a statement about the two states agreeing
+ * instead of a copy of whichever padding was current when it was written.
+ */
+describe('the box the title sits in', () => {
+  /** Every utility that puts space around the text, in a stable order. */
+  function spacing(element: Element): string[] {
+    return [...element.classList]
+      .filter((name) => /^-?[pm][xytrbl]?-/.test(name))
+      .sort()
+  }
+
+  function idleBox(editable: boolean): Element {
+    const { container } = renderTitle({ editable })
+    const box = container.firstElementChild
+    expect(box, 'the component rendered nothing').not.toBeNull()
+    return box as Element
+  }
+
+  it('is the same for a viewer as for an editor', () => {
+    const asEditor = spacing(idleBox(true))
+    cleanup()
+    const asViewer = spacing(idleBox(false))
+
+    expect(
+      asEditor,
+      'the padding under test disappeared from both states, so this compares nothing',
+    ).not.toHaveLength(0)
+    expect(
+      asViewer,
+      'the header jumps when an editor opens the viewer preview',
+    ).toEqual(asEditor)
+  })
+
+  /** The static one is inert: no affordance, and nothing focusable. */
+  it('offers a viewer nothing to activate', () => {
+    renderTitle({ editable: false })
+
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(idleBox(false).className).not.toContain('cursor-pointer')
   })
 })
 

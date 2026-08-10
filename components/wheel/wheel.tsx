@@ -100,6 +100,31 @@ export function Wheel({
             fill="var(--color-neutral-100)"
           />
 
+          {/*
+            An empty wheel is drawn as a wheel with one blank slice, not as a
+            bare backdrop. The backdrop is `neutral-100`, so an options-free
+            wheel came out as a white disc under a white rim under a drop
+            shadow — read as a component that had failed to load rather than as
+            a wheel waiting for its first option, which is precisely the state a
+            new wheel opens in.
+
+            `wedgePath(0, 0)` is the same full-disc path a single-option wheel
+            gets: `segmentAngle` floors the count at 1, so the empty wheel and
+            the one-option wheel are the same geometry, and this fills it with
+            the same first palette colour. No label, because there is nothing to
+            label — the "no options yet" announcement is on the svg's aria-label,
+            where it reaches assistive tech without drawing text on a slice that
+            stands for nothing.
+          */}
+          {options.length === 0 && (
+            <path
+              d={wedgePath(0, 0)}
+              fill={sliceColors(0).fill}
+              stroke="#ffffff"
+              strokeWidth={WEDGE_STROKE}
+            />
+          )}
+
           {options.map((option, index) => {
             const { fill, ink } = sliceColors(index)
             const placement = labelPlacement(index, options.length)

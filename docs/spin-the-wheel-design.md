@@ -65,6 +65,36 @@ Consequence: **concurrent editors are a supported case, not an edge case.** See
 §6 _Concurrent editors_ — a naive full-array `PATCH` is a lost-update bug under
 this model.
 
+### Creating a wheel, and the one moment the token exists (resolved)
+
+`POST /wheels` is the only response that ever carries a raw `editToken`
+(`POST /wheels/{shareId}/duplicate` is the same shape for a fork). Nothing
+stores it, nothing can reissue it, and no support route can recover it: §4 keeps
+only a hash, in a collection §5 denies every client. **The create flow's job is
+therefore to get that one value into the address bar and into nothing else.**
+
+The landing page's call to action posts, then navigates to
+`/w/{shareId}#e={editToken}` — `app/create-wheel-button.tsx`. Three destinations
+are forbidden and none of them fails loudly, so all three are asserted rather
+than reviewed: a query string, which is sent to the server and reaches access
+logs, `Referer` on every outbound link, and any analytics added later; a path
+segment, which is the same with fewer steps; and a log line, which on a client
+component means the browser console of every user rather than a file someone has
+to go looking for.
+
+Consequence for the UI: because losing the URL is unrecoverable and looks like
+nothing at all — the wheel simply stops being editable, with no error and
+nothing to click — **the wheel page warns the creator on arrival**, once, and
+then never again. Whether the visitor created this wheel is a fact about the
+tab's history rather than about the wheel, so it travels in `sessionStorage`
+(`lib/wheels/new-wheel.ts`) and not as a query parameter: a parameter would ride
+along in every copy of the URL, telling a co-organizer who opens the link a week
+later that they had just made it.
+
+The duplicate flow (§8) is the documented mitigation once the link is gone, and
+it is why duplicate is open to participants: by then the person who needs it is
+not an editor of anything.
+
 ---
 
 ## 3. Architecture
@@ -768,8 +798,14 @@ confetti. The editor announces the outcome the way they would anyway.
 live" — promises a synchronized experience that only arrives in phase 2 (§9),
 and a participant who stares at a still wheel waiting for it to move will
 reasonably conclude the app is broken. Viewer copy should describe what the
-participant can actually do — read the list, suggest a spot — and leave the spin
-out of it.
+participant can actually do — read the list, suggest an option — and leave the
+spin out of it.
+
+**"Option", not "spot", throughout.** The prototype says "spot", which reads as
+a lunch venue and narrows the product to the one use case its mockup happens to
+show; the landing page already sells the general tool. `WheelOption` is the name
+in the model, the API and the Options panel heading, so the copy now agrees with
+the vocabulary the rest of the system already uses.
 
 ---
 

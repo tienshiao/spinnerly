@@ -2,18 +2,26 @@ import { Badge } from '@/components/ui/badge'
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { conicFromPalette, sliceColors } from './wheel-palette'
+import { CreateWheelButton, CreateWheelProvider } from './create-wheel-button'
 import './landing.css'
 
 /**
  * The landing page, ported from docs/spin-the-wheel-editor/project/Home.dc.html.
  *
- * A server component with no client boundary. The four call-to-action buttons
- * are deliberately inert `<button>` elements — their destinations are TASK-22,
- * which needs the create endpoint behind it. They are styled with
- * `buttonVariants()` rather than the `Button` component because Base UI's
- * Button carries a 'use client' directive, and opening a client boundary for
- * four controls that do nothing yet would ship JavaScript for no behaviour.
- * TASK-22 swaps them for the real component when it has handlers to attach.
+ * A server component still, with one client boundary in it. The two "Make a
+ * wheel" buttons are `CreateWheelButton` — they post to the create endpoint and
+ * navigate into the new wheel's edit URL, which is the whole of the create flow
+ * (TASK-21). Both sit under one `CreateWheelProvider`, which is what makes
+ * "only one wheel is being made" a fact about the page rather than about
+ * whichever button was pressed.
+ *
+ * The other two call-to-action buttons stay deliberately inert `<button>`
+ * elements, and stay styled with `buttonVariants()` rather than the `Button`
+ * component: Base UI's Button carries a 'use client' directive, and opening a
+ * client boundary for a control that does nothing would ship JavaScript for no
+ * behaviour. Both belong to TASK-22, which owns the one question neither this
+ * task nor that styling can answer — where "See a live one" goes, given a demo
+ * wheel needs an owner, a mutation policy and something to reset it.
  *
  * Every such call is wrapped in `cn()`. `buttonVariants()` alone returns raw cva
  * output, which concatenates rather than merges: an override and the variant
@@ -155,148 +163,144 @@ export default function Home() {
           </nav>
         </header>
 
-        <main className="relative">
-          <section
-            className={`grid items-center gap-14 pt-15 pb-[90px] lg:grid-cols-[minmax(360px,1.05fr)_minmax(320px,0.95fr)] ${GUTTER}`}
-          >
-            <div className="flex flex-col items-start gap-6">
-              <Badge variant="secondary">Decide together, in ten seconds</Badge>
-              {/* The prototype's own scale, not --text-h1: the hero is
+        {/* Both "Make a wheel" buttons under one provider, so the second cannot
+            post while the first's request is out — see create-wheel-button.tsx.
+            Everything inside stays a server component: `children` is passed
+            through, not rendered by the client boundary. */}
+        <CreateWheelProvider>
+          <main className="relative">
+            <section
+              className={`grid items-center gap-14 pt-15 pb-[90px] lg:grid-cols-[minmax(360px,1.05fr)_minmax(320px,0.95fr)] ${GUTTER}`}
+            >
+              <div className="flex flex-col items-start gap-6">
+                <Badge variant="secondary">
+                  Decide together, in ten seconds
+                </Badge>
+                {/* The prototype's own scale, not --text-h1: the hero is
                   deliberately larger than the document h1 step. */}
-              <h1 className="m-0 text-[clamp(48px,6vw,78px)] leading-[0.98] text-balance">
-                Stop debating. Spin for it.
-              </h1>
-              <p className="m-0 max-w-[470px] text-[19px] leading-[1.55] text-neutral-700">
-                Build a wheel of options, share a link, and let the whole room
-                watch it land. Everyone can suggest — you decide what makes the
-                cut.
-              </p>
-              <div className="flex flex-wrap gap-3 pt-1">
-                <button
-                  type="button"
-                  className={cn(
-                    buttonVariants(),
-                    'px-9 py-[15px] text-lg shadow-md',
-                  )}
-                >
-                  Make a wheel
-                </button>
-                <button
-                  type="button"
-                  className={cn(
-                    buttonVariants({ variant: 'secondary' }),
-                    'px-8 py-[15px] text-lg',
-                  )}
-                >
-                  See a live one
-                </button>
-              </div>
-              <div className="flex items-center gap-2.5 text-sm text-neutral-700">
-                <span className="inline-flex" aria-hidden="true">
-                  {AVATAR_SLICES.map((paletteIndex, i) => (
-                    <span
-                      key={paletteIndex}
-                      className="rounded-pill size-[26px] shadow-[0_0_0_3px_var(--color-bg)]"
-                      style={{
-                        background: sliceColors(paletteIndex).fill,
-                        marginLeft: i === 0 ? undefined : '-9px',
-                      }}
-                    />
-                  ))}
-                </span>
-                No account needed. Viewers just click the link.
-              </div>
-            </div>
-
-            <div className="flex justify-center" aria-hidden="true">
-              <div className="relative w-[min(420px,100%)]">
-                {/* The pointer. A CSS triangle, as in the prototype. */}
-                <div className="border-t-accent-600 absolute -top-2 left-1/2 z-2 size-0 -translate-x-1/2 border-x-[15px] border-t-[30px] border-x-transparent" />
-                <div className="rounded-pill bg-surface aspect-square w-full p-2.5 shadow-lg">
-                  <div
-                    className="landing-turn rounded-pill relative size-full"
-                    style={{
-                      background: conicFromPalette(HERO_WHEEL_SLICES),
-                    }}
+                <h1 className="m-0 text-[clamp(48px,6vw,78px)] leading-[0.98] text-balance">
+                  Stop debating. Spin for it.
+                </h1>
+                <p className="m-0 max-w-[470px] text-[19px] leading-[1.55] text-neutral-700">
+                  Build a wheel of options, share a link, and let the whole room
+                  watch it land. Everyone can suggest — you decide what makes
+                  the cut.
+                </p>
+                <div className="flex flex-wrap gap-3 pt-1">
+                  <CreateWheelButton className="px-9 py-[15px] text-lg shadow-md">
+                    Make a wheel
+                  </CreateWheelButton>
+                  <button
+                    type="button"
+                    className={cn(
+                      buttonVariants({ variant: 'secondary' }),
+                      'px-8 py-[15px] text-lg',
+                    )}
                   >
-                    <div className="bg-surface rounded-pill border-accent absolute inset-[38%] border-5" />
+                    See a live one
+                  </button>
+                </div>
+                <div className="flex items-center gap-2.5 text-sm text-neutral-700">
+                  <span className="inline-flex" aria-hidden="true">
+                    {AVATAR_SLICES.map((paletteIndex, i) => (
+                      <span
+                        key={paletteIndex}
+                        className="rounded-pill size-[26px] shadow-[0_0_0_3px_var(--color-bg)]"
+                        style={{
+                          background: sliceColors(paletteIndex).fill,
+                          marginLeft: i === 0 ? undefined : '-9px',
+                        }}
+                      />
+                    ))}
+                  </span>
+                  No account needed. Viewers just click the link.
+                </div>
+              </div>
+
+              <div className="flex justify-center" aria-hidden="true">
+                <div className="relative w-[min(420px,100%)]">
+                  {/* The pointer. A CSS triangle, as in the prototype. */}
+                  <div className="border-t-accent-600 absolute -top-2 left-1/2 z-2 size-0 -translate-x-1/2 border-x-[15px] border-t-[30px] border-x-transparent" />
+                  <div className="rounded-pill bg-surface aspect-square w-full p-2.5 shadow-lg">
+                    <div
+                      className="landing-turn rounded-pill relative size-full"
+                      style={{
+                        background: conicFromPalette(HERO_WHEEL_SLICES),
+                      }}
+                    >
+                      <div className="bg-surface rounded-pill border-accent absolute inset-[38%] border-5" />
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </section>
+            </section>
 
-          <section id="how" className={`pb-24 ${GUTTER}`}>
-            <h2 className="mt-0 mb-7.5 text-[38px]">Three steps, one link</h2>
-            <div className="grid [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))] gap-5">
-              <StepCard
-                step="1"
-                chipClassName="bg-accent-200 text-accent-800"
-                title="List the options"
-              >
-                Type them in, edit them any time. The wheel redraws as you go.
-              </StepCard>
-              <StepCard
-                step="2"
-                chipClassName="bg-accent-2-200 text-accent-2-800"
-                title="Share the viewer link"
-              >
-                Everyone sees the same wheel and can suggest options. Only you
-                can edit or spin.
-              </StepCard>
-              <StepCard step="3" chipStyle={AMBER_PILL} title="Spin it">
-                Confetti, a winner, and no more back-and-forth in the group
-                chat.
-              </StepCard>
-            </div>
-          </section>
+            <section id="how" className={`pb-24 ${GUTTER}`}>
+              <h2 className="mt-0 mb-7.5 text-[38px]">Three steps, one link</h2>
+              <div className="grid [grid-template-columns:repeat(auto-fit,minmax(260px,1fr))] gap-5">
+                <StepCard
+                  step="1"
+                  chipClassName="bg-accent-200 text-accent-800"
+                  title="List the options"
+                >
+                  Type them in, edit them any time. The wheel redraws as you go.
+                </StepCard>
+                <StepCard
+                  step="2"
+                  chipClassName="bg-accent-2-200 text-accent-2-800"
+                  title="Share the viewer link"
+                >
+                  Everyone sees the same wheel and can suggest options. Only you
+                  can edit or spin.
+                </StepCard>
+                <StepCard step="3" chipStyle={AMBER_PILL} title="Spin it">
+                  Confetti, a winner, and no more back-and-forth in the group
+                  chat.
+                </StepCard>
+              </div>
+            </section>
 
-          <section id="uses" className={`pb-24 ${GUTTER}`}>
-            <h2 className="mt-0 mb-2 text-[38px]">What people spin for</h2>
-            <p className="mt-0 mb-6.5 text-[17px] text-neutral-700">
-              Anything with too many opinions and not enough time.
-            </p>
-            <div className="flex flex-wrap gap-3">
-              <UsePill className="bg-accent-200 text-accent-800">
-                Team lunch
-              </UsePill>
-              <UsePill className="bg-accent-2-200 text-accent-2-800">
-                Who runs standup
-              </UsePill>
-              <UsePill style={AMBER_PILL}>Friday film</UsePill>
-              <UsePill style={TEAL_PILL}>Secret santa order</UsePill>
-              <UsePill style={VIOLET_PILL}>Raffle prizes</UsePill>
-              <UsePill className="bg-neutral-200 text-neutral-700">
-                Chores
-              </UsePill>
-            </div>
-          </section>
-
-          <section
-            className={`bg-accent mb-18 flex flex-wrap items-center justify-between gap-7 rounded-lg px-11 py-14 text-white ${GUTTER_AS_MARGIN}`}
-          >
-            <div>
-              <h2 className="m-0 mb-2.5 text-[40px] leading-[1.05]">
-                Lunch is in twenty minutes.
-              </h2>
-              <p className="m-0 text-lg opacity-92">
-                Make the wheel now, argue never.
+            <section id="uses" className={`pb-24 ${GUTTER}`}>
+              <h2 className="mt-0 mb-2 text-[38px]">What people spin for</h2>
+              <p className="mt-0 mb-6.5 text-[17px] text-neutral-700">
+                Anything with too many opinions and not enough time.
               </p>
-            </div>
-            {/* The one button that inverts: white fill on the accent band.
+              <div className="flex flex-wrap gap-3">
+                <UsePill className="bg-accent-200 text-accent-800">
+                  Team lunch
+                </UsePill>
+                <UsePill className="bg-accent-2-200 text-accent-2-800">
+                  Who runs standup
+                </UsePill>
+                <UsePill style={AMBER_PILL}>Friday film</UsePill>
+                <UsePill style={TEAL_PILL}>Secret santa order</UsePill>
+                <UsePill style={VIOLET_PILL}>Raffle prizes</UsePill>
+                <UsePill className="bg-neutral-200 text-neutral-700">
+                  Chores
+                </UsePill>
+              </div>
+            </section>
+
+            <section
+              className={`bg-accent mb-18 flex flex-wrap items-center justify-between gap-7 rounded-lg px-11 py-14 text-white ${GUTTER_AS_MARGIN}`}
+            >
+              <div>
+                <h2 className="m-0 mb-2.5 text-[40px] leading-[1.05]">
+                  Lunch is in twenty minutes.
+                </h2>
+                <p className="m-0 text-lg opacity-92">
+                  Make the wheel now, argue never.
+                </p>
+              </div>
+              {/* The one button that inverts: white fill on the accent band.
                 Deep accent for the label — the base accent on white is 3.15:1
                 and fails AA, same pairing rule as the global link colour. */}
-            <button
-              type="button"
-              className={cn(
-                buttonVariants(),
-                'text-accent-700 bg-white px-9 py-[15px] text-lg hover:bg-neutral-200 active:bg-neutral-300',
-              )}
-            >
-              Make a wheel
-            </button>
-          </section>
-        </main>
+              <CreateWheelButton className="text-accent-700 bg-white px-9 py-[15px] text-lg hover:bg-neutral-200 active:bg-neutral-300">
+                Make a wheel
+              </CreateWheelButton>
+            </section>
+          </main>
+        </CreateWheelProvider>
 
         <footer
           className={`border-divider relative flex flex-wrap justify-between gap-4 border-t pt-6.5 pb-10 text-sm text-neutral-700 ${GUTTER}`}
