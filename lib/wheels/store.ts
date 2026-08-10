@@ -15,6 +15,7 @@ import {
   type SuggestionStatus,
   type WheelOption,
   type WheelPatch,
+  type WheelPreview,
   type WheelVersion,
 } from './model'
 import {
@@ -105,6 +106,7 @@ export {
   type Wheel,
   type WheelOption,
   type WheelPatch,
+  type WheelPreview,
   type WheelVersion,
 } from './model'
 
@@ -473,6 +475,72 @@ function copyableOptions(stored: unknown[]): { id?: string; label: string }[] {
 }
 
 /**
+ * Read the little an Open Graph unfurl is allowed to say about a wheel.
+ *
+ * The only read in this module, and the only one it should grow: everything
+ * else here writes. It exists because `generateMetadata` and
+ * `opengraph-image` in app/w/[shareId]/ run on the server before any client
+ * listener exists, so the realtime path in ./use-wheel.ts cannot supply them.
+ *
+ * Reads only what a card can show — a title, the labels and how many there are.
+ * See `WheelPreview` in ./model.ts, and app/og/preview.ts for what the card is
+ * allowed to claim about a list it may be showing months late.
+ *
+ * **`null` for a wheel that is not there, rather than a throw.** Both callers
+ * are metadata: a share link whose wheel has been reaped must still render its
+ * page — the client half in ./wheel-page.tsx has its own not-found state and is
+ * where a visitor is told — and a crawler asking for the image of a missing
+ * wheel should get the generic card, not a 500 that leaves the unfurl with a
+ * broken image in it. This is the one place a missing wheel is not an error.
+ *
+ * Unauthenticated, like `duplicateWheel` and for the same reason: everything it
+ * returns is already readable by anyone holding the share URL under the rules in
+ * design doc section 5. And like that function it does **not** slide `expiresAt`
+ * — an unfurl is a crawler reading a link somebody pasted, not activity on the
+ * wheel, and treating it as activity would let a link pasted into a busy channel
+ * keep a wheel alive indefinitely.
+ */
+export async function readWheelPreview(
+  shareId: string,
+  db: Firestore = getAdminDb(),
+): Promise<WheelPreview | null> {
+  // As everywhere else, before the value can reach a document path. A malformed
+  // ID is simply an unknown wheel here — there is no status code to choose
+  // between, since the caller renders the same generic card either way.
+  if (!isShareId(shareId)) return null
+
+  const wheel = await db.collection(WHEELS).doc(shareId).get()
+  if (!wheel.exists) return null
+
+  const title: unknown = wheel.get('title')
+  // Read once. The count and the labels have to describe the same array, and
+  // two reads of `wheel.data()` would only look like they do.
+  const options = storedOptions(wheel.data())
+
+  return {
+    // `DEFAULT_TITLE` rather than an empty string for a document whose title is
+    // missing or not a string, which this API cannot produce but a hand-edited
+    // document can. An unfurl reading "Untitled wheel" is the same thing the app
+    // shows; an unfurl with no title at all is a share card with a blank line in
+    // it, cached that way.
+    title: typeof title === 'string' ? title : DEFAULT_TITLE,
+    // Labels only, in stored order — the card colours a pill by its position, so
+    // the order is what pairs a pill with its wedge. Ids, `addedAt` and
+    // `fromSuggestion` are none of a share card's business.
+    //
+    // A non-string label becomes the empty string rather than being dropped
+    // here, because dropping it would shift every option after it into the wrong
+    // colour. `optionPills` filters at the point where the position is no longer
+    // needed.
+    options: options.map((option) => labelOf(option)),
+    // Counted from the array rather than read from a denormalised field, because
+    // there is no such field — and adding one would put a number that can
+    // disagree with the array into every write path in this module.
+    optionCount: options.length,
+  }
+}
+
+/**
  * Fork a wheel into a new one. Design doc section 8.
  *
  * **Unauthenticated, deliberately.** Anyone holding the share URL may fork —
@@ -737,6 +805,18 @@ function storedOptions(data: unknown): unknown[] {
 /** The id of a stored option element, if it has one. */
 function optionIdOf(option: unknown): unknown {
   return (option as { id?: unknown } | null | undefined)?.id
+}
+
+/**
+ * A stored option's label, or the empty string if it does not have a usable one.
+ *
+ * Only `readWheelPreview` uses it, and the empty string rather than `undefined`
+ * is what keeps that function's array parallel to the stored one — see the note
+ * there about a dropped label shifting every colour after it.
+ */
+function labelOf(option: unknown): string {
+  const label = (option as { label?: unknown } | null | undefined)?.label
+  return typeof label === 'string' ? label : ''
 }
 
 /**

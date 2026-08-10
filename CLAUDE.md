@@ -201,6 +201,76 @@ which is a separate subscription, so the three suggestion mutations additionally
 wait for a queue delivery. Drop that and an optimistic suggestion row vanishes
 the moment the wheel catches up and reappears when the queue arrives.
 
+### The unfurl
+
+`app/og/` and the two `opengraph-image.tsx` routes. This is the reason the
+project uses a framework at all (design doc §3): crawlers don't run JavaScript,
+so an SPA gives every wheel the same preview.
+
+**Everything here is read from a cache, possibly long after it stopped being
+true.** Slack and X keep an unfurl against the share URL — the string people
+paste — and never re-fetch, so there is no cache-busting move and no way to
+correct a card once it is out.
+
+The card names the options anyway (§11 Q1 answered the other way round from its
+own leaning, at the user's call). What staleness rules out is not the list but
+any phrasing that claims to be current or complete: `optionPills` reports an
+overflow **even when it is showing every option**, so four pills always read as a
+sample rather than as the wheel; `optionCountLine` describes rather than
+promises; and `og:description` deliberately stays a count, since it is quoted
+verbatim into a chat message where a stale list of specific things reads worse
+than a stale number.
+
+Five things that bite:
+
+- **Satori is not a browser, and its SVG support is narrower still.** No grid, no
+  `conic-gradient`, no stylesheet, no CSS custom properties, no `filter`. Worse,
+  inside an `<svg>` it does not invoke function components, renders only the
+  first child of a fragment, and drops a second level of `<g>`. Every one of
+  those failures is a silently empty picture on a card already in Slack's cache.
+  `components/wheel/disc.tsx` is shaped around them — read the note there before
+  changing its structure, and re-render a card after you do.
+- **One wheel and one mark, each drawn once.** The landing hero, the wheel page
+  and both cards render `WheelDisc`; the two headers, both cards and the favicon
+  render `WheelMark`. They used to be separate drawings — conic gradients, SVG
+  arcs, three hub sizes, two different fourth quarters on the mark — which is
+  what drift looks like when nothing is wrong with any one of them. Proportions
+  live in `components/wheel/geometry.ts`, the palette sequences in
+  `app/wheel-palette.ts`. Colours reach the cards as literals because Satori has
+  no `var()`; everything else they share with the app. **The wedges meet edge to
+  edge** — no white divider — which is what makes the wheel and the mark read as
+  the same object; `app/icon.tsx` is that mark, so a favicon with a seam in it
+  means somebody put the stroke back.
+- **The OG route cannot use the app's fonts.** `next/font/google` self-hosts
+  woff2, which Satori does not parse, under content-hashed paths. Hence the
+  committed ttf files in `assets/fonts/` and the `outputFileTracingIncludes`
+  entry in `next.config.ts` — a font missing from the deployment bundle is a
+  card in a fallback face, cached that way, not a build error.
+- **`openGraph` and `twitter` replace the layout's, field group by field group,
+  rather than merging.** A page that sets `twitter: { title }` drops the root's
+  `card: 'summary_large_image'` and X renders the card as a small square. Nothing
+  type-checks or lints this. Restate what you need.
+- **A wheel that cannot be read is never an error here.** `readWheelPreview`
+  answers `null`, both routes fall back to the generic card and generic copy, and
+  the client half of the page is what tells a visitor the wheel is gone. A throw
+  in the image route is a 500 cached as a broken image against a live share link.
+
+`app/og/preview.ts` is the pure half — the wording, the count line, the pills,
+the slice list, the title size ramp — and it is shared by the image and by
+`generateMetadata` so a card cannot claim six options beside a description
+claiming five. Those are read by different programs; nothing local would catch
+the mismatch. A pill's dot is its option's **position** in the palette, which is
+what pairs it with its own wedge; sorting or filtering that list would leave the
+card disagreeing with its own picture.
+
+**`app/robots.ts` is part of this, not housekeeping.** A share URL is the
+capability, so `/w/` is disallowed to keep wheels out of search results — but
+the unfurlers honour robots.txt exactly like an indexer, so the file names them
+in their own group to except them. Delete that group and every preview stops,
+with no error anywhere. And do not replace the disallow with a `noindex` meta
+tag: it is the stronger measure, and several unfurlers decline a card on a
+noindexed page.
+
 ### Resolving a role
 
 The role is the URL and nothing else (design doc §2), and there is no way to

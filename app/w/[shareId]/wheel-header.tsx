@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { conicFromPalette } from '@/app/wheel-palette'
+import { WheelMark } from '@/components/wheel/disc'
 import { copyText } from '@/lib/clipboard'
 import type { WheelRole } from '@/lib/wheels/use-wheel-session'
 
@@ -28,9 +28,6 @@ import { WheelTitle } from './wheel-title'
  * one control an editor reaches for while a wheel is actively being spammed, and
  * two clicks behind an overflow icon is the wrong place for that.
  */
-
-/** The brand mark's four quarters. The same four the landing page uses. */
-const BRAND_MARK_SLICES = [0, 1, 2, 4] as const
 
 /** How long the copy button stays on its confirmation before reverting. */
 const COPIED_LABEL_MS = 2000
@@ -74,12 +71,9 @@ export function WheelHeader({
   return (
     <header className="border-divider relative flex flex-wrap items-center justify-between gap-5 border-b px-5 py-[22px] sm:px-10">
       <div className="flex min-w-0 flex-wrap items-center gap-3.5">
-        <Link
-          href="/"
-          aria-label="Spinnerly home"
-          className="size-[38px] flex-none rounded-full shadow-[inset_0_0_0_5px_#fff]"
-          style={{ background: conicFromPalette(BRAND_MARK_SLICES) }}
-        />
+        <Link href="/" aria-label="Spinnerly home" className="flex-none">
+          <WheelMark className="size-[38px]" />
+        </Link>
 
         <div className="flex min-w-0 flex-col">
           <WheelTitle
