@@ -1038,6 +1038,17 @@ scoping separately rather than bolting on.
 | 21  | How does an expired-but-unreaped wheel behave? | **As a live wheel** — no route checks `expiresAt`, and any write slides it back out of danger (§8)                                     |
 | 22  | When does an optimistic entry retire?          | **On the snapshot, never on the HTTP response** — by identity, or by the version the route reports in `x-wheel-updated-at` (§3, §6)    |
 | 23  | How does the page know its token is valid?     | **`GET /wheels/{shareId}/editor`** — a read-only check. Only `401`/`403` demote; a failure to answer keeps the editor view (§6)        |
+| 24  | What are the landing page's other CTAs?        | **There are none** — every call to action makes a wheel. No demo wheel, no wheel lookup: a wheel is reachable only by its link (§2)    |
+
+Decision 24 retires the prototype's two remaining landing buttons. "See a live
+one" wanted a public demo wheel, which is not a link but a small feature: it
+needs an owner, a policy on whether strangers may mutate it, and something to
+reset it when they do. "Open a wheel" promised a lookup that cannot exist —
+there are no accounts, so there is no list to show and no handle to search by,
+and the only way into a wheel is the link its creator shares. Both slots now
+make a wheel, which is the one thing the page can honestly offer a first-time
+visitor. A demo wheel remains available as its own task if the landing page ever
+needs one.
 
 Decisions 10–16 resolve conflicts between this document and the Claude Design
 prototype in `docs/spin-the-wheel-editor/`. Where the two disagree, this table
