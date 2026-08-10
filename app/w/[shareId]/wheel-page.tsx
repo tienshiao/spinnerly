@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Wheel } from '@/components/wheel/wheel'
+import { SoundToggle } from '@/components/wheel/sound-toggle'
 import { useSpin } from '@/components/wheel/use-spin'
 import { cn } from '@/lib/utils'
 import type { WheelApi } from '@/lib/wheels/api-client'
@@ -436,7 +437,7 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
           collapses — decision 14. No `min-width` on either column below `lg`,
           so nothing can force a horizontal scrollbar at 320px. */}
       <main className="relative grid items-start gap-[34px] px-5 pt-[34px] pb-[60px] sm:px-10 lg:grid-cols-[minmax(380px,1fr)_minmax(400px,1fr)]">
-        <section className="border-divider flex flex-col items-center gap-5 rounded-[var(--radius-lg)] border bg-neutral-100 p-5 shadow-[var(--shadow-sm)] sm:p-7">
+        <section className="border-divider relative flex flex-col items-center gap-5 rounded-[var(--radius-lg)] border bg-neutral-100 p-5 shadow-[var(--shadow-sm)] sm:p-7">
           <div className="w-full max-w-[480px]">
             <Wheel
               options={spin.options}
@@ -452,6 +453,26 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
                 ref={spinButtonRef}
                 size="lg"
                 onClick={spin.spin}
+                /*
+                  Four ways of saying "a spin is coming", earliest first, so the
+                  audio device has as long as possible to wake up. Opening one
+                  takes time this page does not control — hundreds of
+                  milliseconds for a Bluetooth link — and the first tick is 26ms
+                  after the click, so a cold device eats the whole opening
+                  flurry and leaves the flourish four seconds later sounding
+                  fine.
+
+                  A hover or a focus is worth far more than a press: seconds
+                  rather than the length of a click. Neither grants user
+                  activation on its own, which is why `warm` checks for it and
+                  declines on a page nobody has touched — see its note. The
+                  press is the backstop that always works, and it covers touch,
+                  where there is no hover to have.
+                */
+                onPointerEnter={spin.warm}
+                onFocus={spin.warm}
+                onPointerDown={spin.warm}
+                onKeyDown={spin.warm}
                 disabled={!spin.canSpin}
                 className="px-[46px] py-4 text-xl shadow-[var(--shadow-md)]"
               >
@@ -511,6 +532,12 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
                 onSpinAgain={spinAgain}
                 returnFocusTo={spinButtonRef}
               />
+
+              {/* Editor-only, in the corner of the card whose wheel makes the
+                  noise. Decision 13 keeps the spin in the spinning browser in
+                  v1, so a participant has nothing to mute and a control offered
+                  to them would be a promise the page does not keep. */}
+              <SoundToggle className="absolute right-3 bottom-3" />
             </>
           ) : (
             /*

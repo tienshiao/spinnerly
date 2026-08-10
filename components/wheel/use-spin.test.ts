@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WheelOption } from '@/lib/wheels/model'
 
 import { midAngle, normalizeDegrees, POINTER_ANGLE } from './geometry'
+import { spinEase } from './tick-schedule'
 import {
   REDUCED_MOTION_SETTLE_MS,
   SPIN_DURATION_MS,
@@ -594,5 +595,153 @@ describe('cleanup', () => {
 
     expect(() => vi.advanceTimersByTime(SPIN_SETTLE_MS * 2)).not.toThrow()
     expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+/**
+ * The sound, as wiring rather than as noise. What ./sounds.ts does with these
+ * calls is its own suite's business; what this one asserts is that they are
+ * made, with the right schedule, at the right two moments — and not at all when
+ * the wheel is not going to move.
+ */
+describe('the sound', () => {
+  function sink() {
+    return {
+      warm: vi.fn(),
+      spin: vi.fn(),
+      win: vi.fn(),
+      cancel: vi.fn(),
+      dispose: vi.fn(),
+    }
+  }
+
+  it('hands over a schedule that matches the spin it is about to run', () => {
+    const sounds = sink()
+    const { result } = renderHook(() => useSpin(OPTIONS, picks(1), sounds))
+
+    act(() => result.current.spin())
+
+    expect(sounds.spin).toHaveBeenCalledTimes(1)
+    const schedule = sounds.spin.mock.calls[0][0]
+
+    // One click per wedge boundary crossed, every one inside the animation, and
+    // the last one late — the wheel is barely moving by then.
+    expect(schedule.times.length).toBeGreaterThan(OPTIONS.length)
+    expect(Math.max(...schedule.times)).toBeLessThan(SPIN_DURATION_MS)
+    expect(schedule.gaps[schedule.gaps.length - 1]).toBeGreaterThan(
+      schedule.gaps[0],
+    )
+  })
+
+  /**
+   * The second spin's schedule is computed from where the wheel actually IS,
+   * not from where it was when this callback was built. The rotation comes from
+   * a ref for exactly this reason; reading the state through the closure would
+   * make every schedule after the first describe the first spin's journey.
+   */
+  it('schedules the second spin from where the first one stopped', () => {
+    const sounds = sink()
+    const { result } = renderHook(() => useSpin(OPTIONS, picks(1), sounds))
+
+    act(() => result.current.spin())
+    act(() => void vi.advanceTimersByTime(SPIN_SETTLE_MS))
+
+    const from = result.current.rotation
+    act(() => result.current.dismiss())
+    act(() => result.current.spin())
+    const to = result.current.rotation
+
+    // The last click is the boundary half a wedge from the finish, so reading
+    // it back through the easing gives the fraction of the journey it sits at —
+    // and that fraction is only right if the schedule was built from `from`.
+    // A stale closure would have handed over the first spin's schedule again,
+    // which is a longer journey and lands this in the wrong place.
+    const schedule = sounds.spin.mock.calls[1][0]
+    const segment = 360 / OPTIONS.length
+    const travel = to - from
+
+    expect(travel).toBeGreaterThan(0)
+    expect(
+      spinEase(schedule.times[schedule.times.length - 1] / SPIN_DURATION_MS),
+    ).toBeCloseTo((travel - segment / 2) / travel, 6)
+  })
+
+  /**
+   * The head start. A device opening from cold — a Bluetooth link above all —
+   * swallows whatever is scheduled while it wakes, and the first click is 26ms
+   * after the spin begins, so a page that only opens the audio on the click
+   * loses the whole opening flurry and keeps the flourish four seconds later.
+   * The page wires this to the button's press rather than to its click.
+   */
+  it('can open the audio before there is anything to play', () => {
+    const sounds = sink()
+    const { result } = renderHook(() => useSpin(OPTIONS, picks(1), sounds))
+
+    act(() => result.current.warm())
+
+    expect(sounds.warm).toHaveBeenCalledTimes(1)
+    expect(sounds.spin, 'warming is not spinning').not.toHaveBeenCalled()
+  })
+
+  it('plays the flourish with the result, not before it', () => {
+    const sounds = sink()
+    const { result } = renderHook(() => useSpin(OPTIONS, picks(3), sounds))
+
+    act(() => result.current.spin())
+    expect(sounds.win).not.toHaveBeenCalled()
+
+    act(() => void vi.advanceTimersByTime(SPIN_SETTLE_MS))
+
+    expect(sounds.win).toHaveBeenCalledTimes(1)
+    expect(result.current.result?.option).toBe(OPTIONS[3])
+  })
+
+  /**
+   * Reduced motion, and the asymmetry is the point: there is no rotation for a
+   * click to mark, so four seconds of ticking would be a sound effect for an
+   * animation the user asked not to see. A chord is not movement, so the win
+   * still plays.
+   */
+  it('drops the clicks under reduced motion and keeps the flourish', () => {
+    stubReducedMotion(true)
+    const sounds = sink()
+    const { result } = renderHook(() => useSpin(OPTIONS, picks(0), sounds))
+
+    act(() => result.current.spin())
+    act(() => void vi.advanceTimersByTime(REDUCED_MOTION_SETTLE_MS))
+
+    expect(sounds.spin).not.toHaveBeenCalled()
+    expect(sounds.win).toHaveBeenCalledTimes(1)
+  })
+
+  it('says nothing about a wheel too small to spin', () => {
+    const sounds = sink()
+    const { result } = renderHook(() =>
+      useSpin(OPTIONS.slice(0, 1), picks(0), sounds),
+    )
+
+    act(() => result.current.spin())
+
+    expect(sounds.spin).not.toHaveBeenCalled()
+    expect(sounds.win).not.toHaveBeenCalled()
+  })
+
+  /**
+   * A spin hands the audio thread every click up front, four seconds ahead, so
+   * a page left mid-spin would go on ticking through whatever replaced it —
+   * with nothing on screen to explain the noise or to stop it.
+   */
+  it('lets go of the audio on unmount', () => {
+    const sounds = sink()
+    const { result, unmount } = renderHook(() =>
+      useSpin(OPTIONS, picks(1), sounds),
+    )
+
+    act(() => result.current.spin())
+    expect(sounds.dispose).not.toHaveBeenCalled()
+
+    unmount()
+
+    expect(sounds.dispose).toHaveBeenCalledTimes(1)
   })
 })
