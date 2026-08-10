@@ -211,6 +211,30 @@ export type CreatedWheel = {
   editToken: string
 }
 
+/**
+ * What an Open Graph unfurl knows about a wheel.
+ *
+ * `readWheelPreview` in ./store.ts produces it, and it is the whole input to
+ * app/og/preview.ts and to both cards.
+ *
+ * **`optionCount` is separate from `options.length` on purpose.** The labels are
+ * a sample — the card names four and counts the rest — so the count has to be
+ * the wheel's rather than the sample's, and deriving one from the other would
+ * make "+2 more" impossible to state. Nothing here may assume `options` is
+ * complete.
+ *
+ * Stated here rather than in ./store.ts so the card renderer can name the type
+ * without importing a `server-only` module. It is not on the client data path
+ * and nothing in a browser bundle refers to it.
+ */
+export type WheelPreview = {
+  title: string
+  /** Every option on the wheel, in wheel order. */
+  options: string[]
+  /** How many there are, which is what the card counts. */
+  optionCount: number
+}
+
 /** A suggestion as `POST /wheels/{shareId}/suggestions` reports it. */
 export type CreatedSuggestion = {
   id: string
