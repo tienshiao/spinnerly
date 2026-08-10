@@ -24,6 +24,19 @@ export type WheelTitleProps = {
   editable: boolean
   /** An unlanded title write is outstanding — from `view.saving.title`. */
   saving: boolean
+  /**
+   * Open the field on mount, for a wheel this tab has just created.
+   *
+   * Read once, as initial state. A wheel arrives called "Untitled wheel" and
+   * naming it is the first thing its creator wants; a title that is merely
+   * *clickable* announces that with a hover state, which says nothing on a
+   * touch screen and nothing to someone who has not thought to try. Opening it
+   * makes the affordance the page's opening move instead of a discovery.
+   *
+   * Ignored unless `editable` — the field is not rendered for a participant at
+   * all, so this cannot open one.
+   */
+  startEditing?: boolean
   /** Rejects with `ApiError`; this component reports the failure and reverts. */
   onRename: (title: string) => Promise<void>
   onError: (message: string) => void
@@ -33,11 +46,19 @@ export function WheelTitle({
   title,
   editable,
   saving,
+  startEditing = false,
   onRename,
   onError,
 }: WheelTitleProps) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
+  /**
+   * Both seeded from `startEditing`, and the draft has to be seeded with them:
+   * the button below sets `draft` and `editing` together, so opening the field
+   * without the title in hand would present an empty box — which `commit()`
+   * reads as a cancel, and which loses the name the editor was about to edit
+   * rather than replace.
+   */
+  const [editing, setEditing] = useState(startEditing)
+  const [draft, setDraft] = useState(startEditing ? title : '')
   const inputRef = useRef<HTMLInputElement>(null)
 
   /**
@@ -79,7 +100,25 @@ export function WheelTitle({
       <span className="font-heading text-[24px] leading-none">{title}</span>
     )
 
-    if (!editable) return label
+    if (!editable) {
+      /**
+       * The same box the button below occupies, on an element that does
+       * nothing.
+       *
+       * A bare label here is what made the header move: `editable` flips on the
+       * preview toggle, and dropping `px-1 py-0.5` with the button took 4px off
+       * the title's width and 4px off the header's height every time an editor
+       * looked at the viewer view. It also broke the alignment underneath — the
+       * "Spinnerly" line in wheel-header.tsx carries its own `px-1` to sit flush
+       * with this text, which it only did in one of the two states.
+       *
+       * Kept as literals matching the button rather than hoisted into a shared
+       * constant: the padding is all the two states may share. Chrome, cursor
+       * and hover belong to the one that can be activated, and a constant
+       * covering both invites the next change to move something across.
+       */
+      return <span className="px-1 py-0.5">{label}</span>
+    }
 
     return (
       <button

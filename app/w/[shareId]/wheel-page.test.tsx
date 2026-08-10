@@ -12,6 +12,11 @@ import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { WheelApi } from '@/lib/wheels/api-client'
+import {
+  consumeWheelCreated,
+  forgetCreatedWheels,
+  markWheelCreated,
+} from '@/lib/wheels/new-wheel'
 
 /**
  * The wheel page shell: role resolution, the header, and the states either side
@@ -196,6 +201,10 @@ beforeEach(() => {
   firestore.listeners.length = 0
   nav.push.mockClear()
   setHash('')
+  // Both, and both matter: the flag lives in storage, and the answer to it is
+  // cached in module state that outlives any one case.
+  globalThis.sessionStorage.clear()
+  forgetCreatedWheels()
 })
 
 afterEach(cleanup)
@@ -402,6 +411,66 @@ describe('the header', () => {
   })
 
   /**
+   * TASK-21 AC 3, end to end. The clipboard API is gated on a secure context, so it is
+   * absent on a plain-http preview build and on any page opened by IP address —
+   * and "send someone a link" is the entire product, so this button failing on a
+   * LAN preview is not a hypothetical.
+   *
+   * The point of the case is the pair of assertions at the end together: the
+   * fallback carried the same fragment-free URL, AND the page said nothing went
+   * wrong. Either alone would be satisfied by an implementation that quietly
+   * confirmed a copy that never happened.
+   */
+  it('falls back to execCommand where there is no clipboard API', async () => {
+    setHash(`#e=${TOKEN}`)
+    const user = userEvent.setup()
+
+    // Captured so the `finally` can put it back. Left as `undefined` it happens
+    // to suit every later case in this file, which is exactly what makes it a
+    // trap for the next one added.
+    const realClipboard = Object.getOwnPropertyDescriptor(
+      globalThis.navigator,
+      'clipboard',
+    )
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
+    })
+    const copied: string[] = []
+    Object.defineProperty(globalThis.document, 'execCommand', {
+      value: vi.fn((command: string) => {
+        if (command !== 'copy') return false
+        copied.push(document.querySelector('textarea')?.value ?? '')
+        return true
+      }),
+      configurable: true,
+    })
+
+    try {
+      await mount(fakeApi('editor'))
+      await user.click(screen.getByRole('button', { name: /copy share link/i }))
+
+      expect(screen.getByRole('button', { name: /copied/i })).toBeTruthy()
+      expect(copied).toHaveLength(1)
+      expect(copied[0]).toContain(`/w/${SHARE_ID}`)
+      expect(copied[0], 'the fallback path leaked the token').not.toContain(
+        TOKEN,
+      )
+      expect(
+        screen.queryByRole('status'),
+        'a successful fallback must not also report a failure',
+      ).toBeNull()
+    } finally {
+      Reflect.deleteProperty(globalThis.document, 'execCommand')
+      if (realClipboard === undefined) {
+        Reflect.deleteProperty(globalThis.navigator, 'clipboard')
+      } else {
+        Object.defineProperty(globalThis.navigator, 'clipboard', realClipboard)
+      }
+    }
+  })
+
+  /**
    * AC 9, and decision 5: duplicate is unauthenticated, so it is the escape
    * hatch for a wheel whose editor has vanished — gating it behind being an
    * editor would take it away from the person most likely to need it.
@@ -443,6 +512,38 @@ describe('the header', () => {
     await waitFor(() =>
       expect(nav.push).toHaveBeenCalledWith(`/w/${NEW_ID}#e=forked-token`),
     )
+  })
+
+  /**
+   * A fork is a new wheel, so it earns the same AC 5 warning — and the person
+   * who gets it is very often a participant, since duplicate is the escape
+   * hatch for a wheel whose editor has vanished. They arrive as the fork's only
+   * editor, holding a token minted once and unrecoverable, having never seen
+   * the create flow that explains what that URL is.
+   *
+   * Read at the moment `push` is called rather than afterwards, for the reason
+   * the create-flow case gives: marking it after the navigation is a race the
+   * page usually wins, so an end-state assertion would pass while the notice
+   * appeared for some users and not others.
+   */
+  it('marks the fork as this tab’s before navigating to it', async () => {
+    const api = fakeApi()
+    const user = userEvent.setup()
+    let markedAtPush: boolean | undefined
+    nav.push.mockImplementation(() => {
+      markedAtPush = consumeWheelCreated(NEW_ID)
+    })
+
+    await mount(api)
+    await user.click(
+      screen.getByRole('button', { name: /more wheel actions/i }),
+    )
+    await user.click(
+      await screen.findByRole('menuitem', { name: /duplicate wheel/i }),
+    )
+
+    await waitFor(() => expect(nav.push).toHaveBeenCalled())
+    expect(markedAtPush).toBe(true)
   })
 })
 
@@ -772,17 +873,25 @@ describe('the suggestions queue', () => {
  * sits in the participant view with no account of why, holding an edit link the
  * user believes in.
  */
-describe('the notice strip', () => {
-  /** The failure any page can produce without an editor token: no clipboard. */
-  async function failToCopy(user: ReturnType<typeof userEvent.setup>) {
-    Object.defineProperty(globalThis.navigator, 'clipboard', {
-      value: undefined,
-      configurable: true,
-    })
-    await user.click(screen.getByRole('button', { name: /copy share link/i }))
-    await screen.findByText(/could not reach the clipboard/i)
-  }
+/**
+ * The failure any page can produce without an editor token: no clipboard, and
+ * no `execCommand` to fall back to either — which is jsdom as it comes, so
+ * removing the one API is enough to exhaust both routes.
+ *
+ * At module scope because two describes need it: a failure is the thing shown
+ * over every other notice, so it is how each of the others is tested for what
+ * happens underneath one.
+ */
+async function failToCopy(user: ReturnType<typeof userEvent.setup>) {
+  Object.defineProperty(globalThis.navigator, 'clipboard', {
+    value: undefined,
+    configurable: true,
+  })
+  await user.click(screen.getByRole('button', { name: /copy share link/i }))
+  await screen.findByText(/could not reach the clipboard/i)
+}
 
+describe('the notice strip', () => {
   it('explains a refused token even after an earlier failure was dismissed', async () => {
     const user = userEvent.setup()
     const api = fakeApi('not-editor')
@@ -837,6 +946,187 @@ describe('the notice strip', () => {
     await user.click(screen.getByRole('button', { name: /dismiss this/i }))
 
     expect(screen.queryByRole('status')).toBeNull()
+  })
+})
+
+/**
+ * TASK-21 AC 5: the edit URL is the only key, and there is no locksmith.
+ *
+ * There are no accounts, so a lost edit link cannot be reissued by anyone — the
+ * wheel is simply read-only forever, for its own creator, with no error and
+ * nothing to click. The warning has to land at the one moment it can still be
+ * acted on, which is arrival, and then get out of the way: a banner that
+ * returned on every visit would be gone from the reader's attention long before
+ * the visit where it mattered.
+ */
+describe('the edit-key warning', () => {
+  /** Arrival on a wheel this tab just created, as `CreateWheelButton` leaves it. */
+  async function arriveOnANewWheel(api: WheelApi) {
+    setHash(`#e=${TOKEN}`)
+    markWheelCreated(SHARE_ID)
+    return mount(api)
+  }
+
+  it('warns the creator that the link cannot be recovered', async () => {
+    await arriveOnANewWheel(fakeApi('editor'))
+
+    const notice = screen.getByRole('status').textContent ?? ''
+    expect(notice).toContain('Bookmark')
+    expect(
+      notice,
+      'the warning has to say the link is unrecoverable, not merely that it is important',
+    ).toMatch(/no way back in/i)
+  })
+
+  it('says nothing on an ordinary visit to the same wheel', async () => {
+    setHash(`#e=${TOKEN}`)
+
+    await mount(fakeApi('editor'))
+
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  /**
+   * Spent on arrival, so a reload is an ordinary visit. Mounted twice against
+   * one `markWheelCreated`, which is what a refresh looks like from here.
+   *
+   * `forgetCreatedWheels` is what makes the second mount a RELOAD rather than a
+   * remount, and the distinction is the module's own: within a page load the
+   * answer is deliberately stable, because its reader is a `useState`
+   * initializer and React calls those twice. A reload is the case where that
+   * stability ends — a fresh JavaScript context, so a fresh module — and the
+   * only thing left is the storage slot, which arrival emptied.
+   */
+  it('is gone when the page is loaded again', async () => {
+    await arriveOnANewWheel(fakeApi('editor'))
+    expect(screen.getByRole('status')).toBeTruthy()
+
+    cleanup()
+    firestore.listeners.length = 0
+    forgetCreatedWheels()
+    await mount(fakeApi('editor'))
+
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('can be dismissed, and stays dismissed', async () => {
+    const user = userEvent.setup()
+    await arriveOnANewWheel(fakeApi('editor'))
+
+    await user.click(screen.getByRole('button', { name: /dismiss this/i }))
+
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  /**
+   * The precedence case, and the reason the answer is remembered for the life of
+   * the page rather than re-read per render. A failure outranks the warning
+   * while it is showing — it is newer, and the user's own action produced it —
+   * but it must not consume it. The pairing is not hypothetical: the failure
+   * most likely to appear on this page is the copy button refusing, and the
+   * warning is about the very link they were trying to copy.
+   */
+  it('comes back when a failure shown over it is dismissed', async () => {
+    const user = userEvent.setup()
+    await arriveOnANewWheel(fakeApi('editor'))
+
+    await failToCopy(user)
+    expect(screen.getByRole('status').textContent).toMatch(
+      /could not reach the clipboard/i,
+    )
+
+    await user.click(screen.getByRole('button', { name: /dismiss this/i }))
+
+    expect(screen.getByRole('status').textContent).toContain('Bookmark')
+  })
+
+  /**
+   * The signal is one-shot, so WHERE it is spent decides whether it can be lost.
+   *
+   * Spending it on the first render — which is what a `useState` initializer at
+   * the top of the component does — spends it during the loading render, before
+   * either gate has opened. A first snapshot that then fails renders the "could
+   * not be loaded" page instead, and the reload that succeeds finds an empty
+   * slot: no warning, on the one page whose URL is the only key to the wheel,
+   * for the person who has just this moment created it.
+   *
+   * Asserted on the storage rather than on the screen, because the screen here
+   * is the error page by construction — the claim is that the signal SURVIVES a
+   * load that could not show it.
+   */
+  it('keeps the warning for the reload when the wheel fails to load', async () => {
+    setHash(`#e=${TOKEN}`)
+    markWheelCreated(SHARE_ID)
+
+    render(<WheelPage shareId={SHARE_ID} api={fakeApi('editor')} />)
+    act(() => {
+      listener(SHARE_ID).fail({ code: 'unavailable' })
+      listener('suggestions').next({ docs: [] })
+    })
+    // `find`, not `get`: both gates have to settle before the error page
+    // replaces the skeleton, and the token in the hash means the role is still
+    // resolving at the moment the failed snapshot lands.
+    expect(await screen.findByText(/could not be loaded/i)).toBeTruthy()
+
+    // The reload: a fresh JavaScript context, so a fresh module cache. All that
+    // is left is the storage slot this load must not have emptied.
+    cleanup()
+    firestore.listeners.length = 0
+    forgetCreatedWheels()
+    await mount(fakeApi('editor'))
+
+    expect(screen.getByRole('status').textContent).toContain('Bookmark')
+  })
+})
+
+/**
+ * The other half of arriving on a wheel this tab has just made.
+ *
+ * The wheel is called "Untitled wheel" and naming it is what its creator came
+ * here to do, so the title opens as a field rather than as text with a hover
+ * state — an affordance that says nothing on a touch screen and nothing to
+ * someone who never thought to click it.
+ */
+describe('naming a wheel on arrival', () => {
+  function titleField() {
+    return screen.queryByRole('textbox', { name: 'Wheel title' })
+  }
+
+  it('opens the title focused for the tab that created the wheel', async () => {
+    setHash(`#e=${TOKEN}`)
+    markWheelCreated(SHARE_ID)
+
+    await mount(fakeApi('editor'))
+
+    const field = titleField()
+    expect(field).not.toBeNull()
+    expect(document.activeElement).toBe(field)
+  })
+
+  it('leaves the title alone on an ordinary visit', async () => {
+    setHash(`#e=${TOKEN}`)
+
+    await mount(fakeApi('editor'))
+
+    expect(titleField()).toBeNull()
+    expect(
+      screen.getByRole('button', { name: /^Rename wheel/ }),
+      'the title is still editable, just not opened',
+    ).toBeTruthy()
+  })
+
+  /**
+   * The signal survives a refused token — it is a fact about this tab, not
+   * about the URL — so the participant view has to be the thing that refuses.
+   * A field opened here would be one the server rejects every write from.
+   */
+  it('opens nothing for a tab whose token was refused', async () => {
+    setHash(`#e=${TOKEN}`)
+    markWheelCreated(SHARE_ID)
+
+    await mount(fakeApi('not-editor'))
+
+    expect(titleField()).toBeNull()
   })
 })
 

@@ -97,9 +97,13 @@ export function normalizeDegrees(degrees: number): number {
  *
  * `Math.max(count, 1)` guards the empty wheel: a zero count would make this
  * `Infinity` and every coordinate derived from it `NaN`, which SVG renders as
- * nothing at all — no error, just a blank disc. A wheel with no options should
- * draw as a bare backdrop and hub, and it does, because nothing calls the
- * per-wedge functions when there are no wedges.
+ * nothing at all — no error, just a blank disc.
+ *
+ * The guard is load-bearing rather than merely defensive, because ./wheel.tsx
+ * does call the per-wedge functions with no wedges: an empty wheel is drawn as
+ * `wedgePath(0, 0)`, which the floor turns into the same full disc a
+ * single-option wheel gets. Removing it would not throw — it would silently
+ * draw nothing.
  */
 export function segmentAngle(count: number): number {
   return TAU_DEGREES / Math.max(count, 1)

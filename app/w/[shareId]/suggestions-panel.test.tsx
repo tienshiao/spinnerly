@@ -425,7 +425,7 @@ describe('the participant submit row', () => {
       closed: {
         suggestions: Array.from(
           { length: PENDING_SUGGESTIONS_MAX },
-          (_, index) => suggestion(`Spot ${index}`),
+          (_, index) => suggestion(`Option ${index}`),
         ),
       },
     },
@@ -492,7 +492,7 @@ describe('the participant submit row', () => {
     renderPanel({
       role: 'participant',
       suggestions: Array.from({ length: PENDING_SUGGESTIONS_MAX }, (_, index) =>
-        suggestion(`Spot ${index}`),
+        suggestion(`Option ${index}`),
       ),
     })
 
@@ -514,7 +514,7 @@ describe('the participant submit row', () => {
     renderPanel({
       role: 'participant',
       suggestions: Array.from({ length: PENDING_SUGGESTIONS_MAX }, (_, index) =>
-        suggestion(`Spot ${index}`, { status: 'accepted' }),
+        suggestion(`Option ${index}`, { status: 'accepted' }),
       ),
     })
 

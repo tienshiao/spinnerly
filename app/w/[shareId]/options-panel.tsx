@@ -104,7 +104,7 @@ export function OptionsPanel({
       {options.length === 0 ? (
         <p className="text-[15px] leading-[1.55] text-neutral-700">
           {isEditor
-            ? 'Nothing on the wheel yet. Add the first spot below, then one more — a wheel needs two to spin.'
+            ? 'Nothing on the wheel yet. Add the first option below, then one more — a wheel needs two to spin.'
             : 'Nothing on the wheel yet. The organiser has not added anything to spin for.'}
         </p>
       ) : isEditor ? (
@@ -371,7 +371,7 @@ function AddRow({
         <Input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Add a spot…"
+          placeholder="Add an option…"
           aria-label="Add an option"
           aria-invalid={tooLong}
           className="flex-1"

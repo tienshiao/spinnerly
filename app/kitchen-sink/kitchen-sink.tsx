@@ -95,7 +95,7 @@ export function KitchenSink() {
       <Section title="Input">
         <Row label="default">
           <div className="flex-1">
-            <Input placeholder="Add a spot…" />
+            <Input placeholder="Add an option…" />
           </div>
         </Row>
         <Row label="filled">
@@ -115,7 +115,7 @@ export function KitchenSink() {
         </Row>
         <Row label="with button">
           <div className="flex flex-1 gap-(--space-2)">
-            <Input placeholder="Add a spot…" />
+            <Input placeholder="Add an option…" />
             <Button variant="secondary">Add</Button>
           </div>
         </Row>

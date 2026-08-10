@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { conicFromPalette } from '@/app/wheel-palette'
+import { copyText } from '@/lib/clipboard'
 import type { WheelRole } from '@/lib/wheels/use-wheel-session'
 
 import { WheelTitle } from './wheel-title'
@@ -45,6 +46,8 @@ export type WheelHeaderProps = {
   /** A spin is in flight, which is the one time previewing is refused. */
   spinning: boolean
   savingTitle: boolean
+  /** This tab just made this wheel, so the title opens ready to be named. */
+  titleStartsInEdit?: boolean
   onRename: (title: string) => Promise<void>
   onDuplicate: () => void
   duplicating: boolean
@@ -61,6 +64,7 @@ export function WheelHeader({
   onTogglePreview,
   spinning,
   savingTitle,
+  titleStartsInEdit,
   onRename,
   onDuplicate,
   duplicating,
@@ -85,6 +89,7 @@ export function WheelHeader({
             // that is what previewing means, not because anything was lost.
             editable={isEditor && !previewing}
             saving={savingTitle}
+            startEditing={titleStartsInEdit}
             onRename={onRename}
             onError={onError}
           />
@@ -190,17 +195,13 @@ function CopyLinkButton({
   async function copy() {
     try {
       /**
-       * Tested for rather than optional-chained, and the difference is a lie on
-       * screen. `navigator.clipboard` is undefined outside a secure context —
-       * a plain-http preview build, or an IP address in a browser tab — and
-       * `navigator.clipboard?.writeText(url)` evaluates to `undefined`, which
-       * awaits successfully. The button would then say "Copied" over an
-       * untouched clipboard, and the user would paste whatever was there
-       * before.
+       * `copyText` rather than `navigator.clipboard` directly, because the
+       * clipboard API is absent outside a secure context — a plain-http preview
+       * build, or an IP address in a browser tab — and this is the one button
+       * the whole product depends on. See lib/clipboard.ts: it falls back to
+       * `execCommand`, and it refuses to report success it did not have.
        */
-      if (navigator.clipboard === undefined) throw new Error('no clipboard')
-
-      await navigator.clipboard.writeText(shareUrl)
+      await copyText(shareUrl)
 
       // Restarted, not stacked. Without the clear, a second click at 1.9s still
       // reverts on the FIRST click's timer 100ms later — so the click that was

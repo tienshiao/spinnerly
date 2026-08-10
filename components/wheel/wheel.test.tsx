@@ -108,10 +108,28 @@ describe('the wedges', () => {
     expect(container.querySelector('text')?.textContent).toBe('Curry House')
   })
 
-  it('draws nothing but the backdrop and hub for an empty wheel', () => {
+  /**
+   * The empty wheel draws as a one-slice wheel with nothing written on it.
+   *
+   * Left as a bare backdrop it was a white disc inside a white rim under a drop
+   * shadow, which reads as a component that failed to load rather than as a
+   * wheel waiting for its first option — and that is the state every new wheel
+   * opens in, so it is the first thing a creator sees.
+   */
+  it('draws a single blank slice for an empty wheel', () => {
     const { container } = renderWheel({ options: [] })
+    const paths = container.querySelectorAll('path')
 
-    expect(container.querySelectorAll('path')).toHaveLength(0)
+    expect(paths).toHaveLength(1)
+    expect(paths[0].getAttribute('fill')).toBe(SLICE[0])
+    expect(
+      paths[0].getAttribute('d'),
+      'the empty wheel and the one-option wheel are the same geometry',
+    ).toBe(wedgePath(0, 1))
+    expect(
+      container.querySelectorAll('text'),
+      'a slice standing for nothing must not be labelled',
+    ).toHaveLength(0)
     expect(container.querySelectorAll('circle')).toHaveLength(2)
     expect(container.innerHTML).not.toContain('NaN')
   })

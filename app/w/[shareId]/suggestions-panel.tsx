@@ -130,7 +130,7 @@ export function SuggestionsPanel({
       {suggestions.length === 0 ? (
         <p className="text-[15px] leading-[1.55] text-neutral-700">
           {isEditor
-            ? 'Nothing waiting. Anyone with the share link can propose a spot, and you decide what lands on the wheel.'
+            ? 'Nothing waiting. Anyone with the share link can propose an option, and you decide what lands on the wheel.'
             : 'Nothing suggested yet.'}
         </p>
       ) : (
@@ -514,7 +514,7 @@ function SubmitRow({
             setDraft(event.target.value)
             setSent(false)
           }}
-          placeholder="Suggest a spot…"
+          placeholder="Suggest an option…"
           aria-label="Suggest an option"
           aria-invalid={tooLong}
           className="flex-1"
