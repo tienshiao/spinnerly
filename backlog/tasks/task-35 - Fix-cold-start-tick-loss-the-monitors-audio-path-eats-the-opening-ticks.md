@@ -1,10 +1,10 @@
 ---
 id: TASK-35
 title: 'Fix cold-start tick loss: the monitor''s audio path eats the opening ticks'
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-10 03:57'
-updated_date: '2026-08-10 07:37'
+updated_date: '2026-08-10 08:07'
 labels:
   - bug
   - frontend
@@ -36,7 +36,7 @@ Delete public/audio-lab.html when the fix lands.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With the monitor audio asleep (speaker icon off >10s), the first spin's opening ticks are audible
+- [x] #1 With the monitor audio asleep (speaker icon off >10s), the first spin's opening ticks are audible
 - [x] #2 The spin opens with the whoosh at flourish-comparable level (measured -9 dBFS peak via OfflineAudioContext), and sounds.test.ts asserts it precedes the first click, sustains >=0.3s, and is driven above the filter's cut
 - [x] #3 Mute suppresses the whoosh along with everything else (spin schedules nothing while muted)
 - [x] #4 warm() and its wiring are fully removed: SoundSink, use-spin, the button handlers, and the warming-up test suite
@@ -63,4 +63,12 @@ warm() investigation closed: Chrome stream opens in 22ms, no Chrome-level idle e
 Implemented: warm machinery removed everywhere; scheduleWhoosh added to spin() (300->1500Hz bandpass noise sweep, 40ms attack, 250ms hold, 500ms total, gain 2.0 = -8.8 dBFS peak measured offline). audio-lab.html button 6 mirrors the shipped whoosh for the by-ear cold test on the gated monitor. 958 unit tests, typecheck, lint all pass. Work staged, not committed. AC1 awaits the user's listening test.
 
 Code-review follow-ups applied (2026-08-10): the outputLatency addend was removed from the schedule lead-in — the spec honours any start(t) at or after currentTime, and outputLatency delays all audio uniformly, so adding it doubled the audio/visual offset on high-latency outputs (Bluetooth); leadIn() is gone and SCHEDULE_LEAD_S alone is the margin, with the comment rewritten and a regression test replacing the one that pinned the addend. ensure() now closes a context abandoned by a half-built graph (was leaking one per failed retry against the browser's context cap) and attaches a rejection handler to resume(). The listening harness moved from public/audio-lab.html to docs/audio-lab.html so it cannot ship to production and passes format:check; still open it from disk for the by-ear cold test, and still delete it once AC1 is validated. 961 unit tests, typecheck, lint, format:check all pass.
+
+AC1 validated by the user's by-ear cold test on the gated LG monitor (2026-08-10): with the monitor's audio path asleep, the whoosh opens the gate and the opening ticks are audible. Task marked Done.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Removed the warm() priming machinery entirely (SoundSink.warm, PRIME_S, IDLE_SLEEP_S, everActivated, quietFrom, SpinState.warm, the four spin-button handlers, and the warming-up test suite) after instrumentation proved the cause was not a Chrome stream idle but a level/noise gate on the DisplayPort monitor that no inaudible prime can open. Replaced it with an audible spin-up whoosh at the head of spin(): a 300->1500Hz bandpass noise sweep, 40ms attack, 250ms hold, 500ms total, tuned by OfflineAudioContext render to a -8.8 dBFS peak, which opens the gate by design and leaves the tick train inside its release window. Code review follow-ups: dropped the outputLatency addend from the schedule lead-in (it doubled the audio/visual offset on Bluetooth outputs) leaving SCHEDULE_LEAD_S as the sole margin; ensure() now closes a context abandoned by a half-built graph and handles resume() rejection. Verified by 961 passing unit tests plus typecheck, lint, and format:check, and by the user's cold listening test on the monitor that originally exhibited the tick loss.
+<!-- SECTION:FINAL_SUMMARY:END -->
