@@ -4,7 +4,7 @@ title: Answer the two open questions in design doc section 11
 status: To Do
 assignee: []
 created_date: '2026-08-07 08:34'
-updated_date: '2026-08-07 08:54'
+updated_date: '2026-08-10 18:19'
 labels: []
 dependencies: []
 documentation:
@@ -45,3 +45,23 @@ The remaining section 11 question, on Vercel Firewall rate limiting, is owned by
 - [ ] #15 Design doc section 11 is reduced to genuinely open items
 - [ ] #16 OG image content is decided and recorded in the design doc, and TASK-23 matches it
 <!-- AC:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-10 18:19
+---
+Question 1 (what goes in the OG image, given it will be cached stale) is answered, during TASK-23 review: **title, the first four option labels as pills with a '+N more', the count, and the wheel** — not title and count alone, which is the way this question was leaning.
+
+The reasoning for the leaning still holds and is not discarded, it is bounded. What makes a stale card misleading is not naming things, it is implying the naming is current or complete. So:
+
+- optionPills reports an overflow even when it is showing every option it was given, so four pills always read as a sample rather than as the whole wheel.
+- optionCountLine describes rather than promises.
+- og:description deliberately stays a count with no labels in it, because unlike the image it is quoted verbatim into a chat message, where a stale list of specific things reads worse than a stale number.
+
+Consequence for decision 17 (duplicate copies the title verbatim) is unchanged: two forks still unfurl identically, and the URL is still the identifier.
+
+Design doc §11 question 1 should be rewritten from 'leaning' to this, and §3's 'design the image to be robust to staleness — title, option count, decorative wheel' updated to match — the code contradicts both as written. Left for whoever closes this task, since editing the design doc is TASK-1's job rather than TASK-23's. Questions 2 and 3 are untouched.
+---
+<!-- COMMENTS:END -->
