@@ -1,12 +1,12 @@
 'use client'
 
 import { Dialog } from '@base-ui/react/dialog'
-import { useCallback, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Confetti } from '@/components/wheel/confetti'
 import { useReducedMotion } from '@/components/wheel/use-spin'
-import { useInertBackground } from '@/lib/base-ui-inert'
+import { useInertPopup } from '@/lib/base-ui-inert'
 import { cn } from '@/lib/utils'
 
 /**
@@ -104,16 +104,6 @@ export function WinnerModal({
 
   if (open && label !== shown) setShown(label)
 
-  // A ref for `initialFocus`, which needs one, and state so that the popup
-  // mounting — which happens when this opens, long after this component does —
-  // re-runs the inert effect. Identical to the pattern in components/ui/dialog.
-  const popupRef = useRef<HTMLDivElement>(null)
-  const [popupEl, setPopupEl] = useState<HTMLDivElement | null>(null)
-  const attachPopup = useCallback((node: HTMLDivElement | null) => {
-    popupRef.current = node
-    setPopupEl(node)
-  }, [])
-
   /**
    * Makes the page behind untabbable, which Base UI does not do on its own, and
    * carries the focus-restore fallback the workaround costs — on the Escape
@@ -121,7 +111,7 @@ export function WinnerModal({
    * and the browser drops it. Without this, Escape leaves focus on `<body>` and
    * a keyboard user starts again from the top of the page.
    */
-  useInertBackground(popupEl, open, returnFocusTo)
+  const { popupRef, attachPopup } = useInertPopup(open, returnFocusTo)
 
   return (
     <Dialog.Root
@@ -138,17 +128,23 @@ export function WinnerModal({
         if (!next) onClose()
       }}
     >
-      <Dialog.Portal>
+      {/* `keepMounted`, and it is for the live region below rather than for the
+          popup: a live region only announces CHANGES to a region that already
+          existed, so the region has to be in the DOM — empty — from page load,
+          not arrive alongside the text it is announcing. The popup and backdrop
+          still hide themselves when closed; what stays is the container. */}
+      <Dialog.Portal keepMounted>
         {/* The prototype's #2e2b25 at 45%, re-derived from this theme's ink
             rather than copied. theme.css makes the same argument for the
             shadows: Organic's warm literal is stale against a cool ground, and
             the prototype pages override the palette without ever revisiting it.
 
             **Fades in and does not fade out**, which is a statement about what
-            is possible here rather than a preference. Base UI unmounts the
-            whole portal once the POPUP's animations are finished, and the popup
-            deliberately has no exit animation — so an exit written on the
-            backdrop is torn down before it can run. Left in, it would read as
+            is possible here rather than a preference. Base UI hides the popup
+            and backdrop once the POPUP's animations are finished — `hidden`
+            under `keepMounted`, unmounted without it — and the popup
+            deliberately has no exit animation, so an exit written on the
+            backdrop is cut off before it can run. Left in, it would read as
             a fade that somebody had simply failed to notice was not happening.
             The card leaves at once, as it does in the prototype. */}
         <Dialog.Backdrop
@@ -179,6 +175,39 @@ export function WinnerModal({
             It is also what stops a burst that is still falling when the card is
             dismissed early from carrying on over a page with no backdrop. */}
         {open && <Confetti />}
+
+        {/*
+          AC 5, and it is a live region rather than the dialog's own
+          announcement for two reasons. A `role="status"` only announces
+          CHANGES to a region that was already there, so one shipped inside
+          the card — which arrives with its text already in it — would be
+          silent on the browser and screen reader pairs that read the spec
+          strictly. And the modal is suppressed by nothing, but its *entrance*
+          is: under reduced motion the card appears with no animation at all,
+          and this is what guarantees the result is spoken either way.
+
+          **Inside the portal, and that placement is load-bearing.** The modal
+          marks everything outside its portal `aria-hidden` and inert in the
+          same commit that opens it — before assistive tech's asynchronous
+          live-region processing gets to the text — and screen readers drop
+          announcements from regions that have become hidden. A region left in
+          the page proper is therefore silenced by the very dialog whose
+          result it announces. In here it sits beside the popup, where neither
+          Base UI's marking nor the inert workaround ever reaches.
+
+          The wording matches the card rather than repeating its whole
+          contents, so the two do not read as different events.
+
+          `aria-live` and `aria-atomic` rather than `role="status"`, which is
+          exactly what that role expands to. The page's notice strip is its
+          one element with the status ROLE, and leaving it that way keeps "the
+          page is telling you something" and "the wheel landed on this"
+          distinguishable — to a screen reader user moving by role, and to
+          anyone querying for either.
+        */}
+        <p aria-live="polite" aria-atomic className="sr-only">
+          {open ? `Landed on ${label}` : ''}
+        </p>
 
         <Dialog.Popup
           ref={attachPopup}

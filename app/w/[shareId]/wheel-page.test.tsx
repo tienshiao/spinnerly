@@ -1218,12 +1218,18 @@ describe('the spin', () => {
   })
 
   /**
-   * AC 5. Announced from a live region the page has been carrying all along,
-   * rather than from the card — a region that arrives with its text already in
-   * it is not a change, and screen readers that follow the spec do not read it.
+   * AC 5. Announced from a live region the modal's kept-mounted portal has
+   * been carrying all along, rather than from the card — a region that arrives
+   * with its text already in it is not a change, and screen readers that
+   * follow the spec do not read it.
    *
-   * Its wording is also what the two tests below and the preview suite assert
-   * on, since the card itself only ever prints the bare label.
+   * Queried from `document.body` because the portal is exactly the point: a
+   * region in the page proper is marked `aria-hidden` and inert by the modal
+   * in the same commit that opens it, before assistive tech's asynchronous
+   * live-region processing reads the text — the announcement suppressed by the
+   * very dialog whose result it announces. The portal is the one place the
+   * marking never reaches, and the second assertion after the spin is what
+   * pins that placement.
    */
   it('announces the result to assistive tech', async () => {
     setHash(`#e=${TOKEN}`)
@@ -1231,9 +1237,9 @@ describe('the spin', () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 
     try {
-      const { container } = await mount(fakeApi('editor'))
+      await mount(fakeApi('editor'))
 
-      const live = container.querySelector('[aria-live="polite"]')
+      const live = document.body.querySelector('[aria-live="polite"]')
       expect(
         live,
         'the live region must exist before the result does',
@@ -1243,6 +1249,10 @@ describe('the spin', () => {
       await spinAndSettle(user)
 
       expect(live?.textContent).toMatch(/^Landed on (Tacos|Ramen)$/)
+      expect(
+        live?.closest('[aria-hidden="true"], [inert]'),
+        'the open modal must not have hidden its own announcement',
+      ).toBeNull()
     } finally {
       vi.useRealTimers()
     }
@@ -1321,6 +1331,84 @@ describe('the spin', () => {
        * busy the machine is. The delay is visual; the wiring above is what
        * breaks silently.
        */
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * The other gap the beat opens. Closing the card puts focus back on the spin
+   * button — enabled, because for those 120ms nothing is spinning — so a
+   * second press inside the beat is one keyboard repeat away. The press spins
+   * at once; the timer then fires a callback captured while nothing was
+   * spinning, whose stale `spinning` walks through `spin()`'s guard and
+   * launches a second spin over the first: rotation retargeted mid-flight, a
+   * second tick train over the one still playing.
+   *
+   * Asserted on the wheel's rotation, which is written once at spin start and
+   * then owned by CSS: any change after the press is a second spin.
+   */
+  it('drops the queued re-spin when the spin button is pressed inside the beat', async () => {
+    setHash(`#e=${TOKEN}`)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    try {
+      await mount(fakeApi('editor'))
+      await spinAndSettle(user)
+
+      // DOM clicks as in the preview test above: a `userEvent` click takes
+      // longer in real time than the beat it has to land inside.
+      act(() => {
+        screen.getByRole('button', { name: /spin again/i }).click()
+      })
+      act(() => {
+        screen.getByRole('button', { name: /spin the wheel/i }).click()
+      })
+
+      const rotation = screen.getByRole('img').style.transform
+      expect(rotation, 'the direct press must have spun').not.toBe('')
+
+      // Past the beat, where a surviving timer would fire its stale callback.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500)
+      })
+
+      expect(
+        screen.getByRole('img').style.transform,
+        'a second spin retargeted the wheel mid-flight',
+      ).toBe(rotation)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * Starting a spin disables the button focus was just returned to — AC 4 puts
+   * it there when the card closes — and a natively disabled button is dropped
+   * from the tab order, so the browser would move focus to `<body>`: a screen
+   * reader announces nothing, or reads from the top of the document, for the
+   * whole 4.4 seconds. `focusableWhenDisabled` keeps the element focusable and
+   * swaps the native attribute for `aria-disabled`, which is what jsdom can
+   * assert; the focus drop itself is a real-browser behaviour.
+   */
+  it('keeps the spin button focusable while it spins', async () => {
+    setHash(`#e=${TOKEN}`)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    try {
+      await mount(fakeApi('editor'))
+
+      const button = screen.getByRole('button', { name: /spin the wheel/i })
+      await user.click(button)
+
+      expect(screen.getByRole('button', { name: /spinning/i })).toBe(button)
+      expect(
+        button.hasAttribute('disabled'),
+        'the native attribute is the focus drop',
+      ).toBe(false)
+      expect(button.getAttribute('aria-disabled')).toBe('true')
     } finally {
       vi.useRealTimers()
     }

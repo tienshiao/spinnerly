@@ -4,7 +4,7 @@ import * as React from 'react'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
 
 import { cn, type StringClassName } from '@/lib/utils'
-import { useInertBackground } from '@/lib/base-ui-inert'
+import { useInertPopup } from '@/lib/base-ui-inert'
 import { Button } from '@/components/ui/button'
 import { XIcon } from 'lucide-react'
 
@@ -148,21 +148,13 @@ function DialogContent({
 }: StringClassName<DialogPrimitive.Popup.Props> & {
   showCloseButton?: boolean
 }) {
-  // A ref object for `initialFocus`, which needs one, plus state so that the
-  // popup mounting — which happens on open, well after this component mounts —
-  // actually re-runs the effect below. A ref alone would still be null the one
-  // time the effect ran.
-  const popupRef = React.useRef<HTMLDivElement>(null)
-  const [popupEl, setPopupEl] = React.useState<HTMLDivElement | null>(null)
-  const attachPopup = React.useCallback((node: HTMLDivElement | null) => {
-    popupRef.current = node
-    setPopupEl(node)
-  }, [])
-
   // Makes the page behind the dialog untabbable, which Base UI does not do on
   // its own. Only for a fully modal dialog — see lib/base-ui-inert.ts.
   const { modal, open, triggerRef } = React.useContext(DialogStateContext)
-  useInertBackground(popupEl, modal === true && open, triggerRef)
+  const { popupRef, attachPopup } = useInertPopup(
+    modal === true && open,
+    triggerRef,
+  )
 
   return (
     <DialogPortal>

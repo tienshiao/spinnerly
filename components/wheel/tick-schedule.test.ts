@@ -203,4 +203,27 @@ describe('the cap', () => {
       'the ticks kept must be the audible ones at the end',
     ).toBeGreaterThan(SPIN_DURATION_MS / 2)
   })
+
+  /**
+   * The first KEPT gap is measured from the boundary the cap dropped, not from
+   * the spin's start. Measured from zero it would be most of the elapsed spin,
+   * and ./sounds.ts shapes timbre from the gap — so the fastest surviving
+   * click would be rendered as the slowest, softest knock of the whole train,
+   * immediately followed by the bright fast ones.
+   */
+  it('keeps the first surviving gap honest about the wheel speed', () => {
+    const { times, gaps } = tickSchedule({
+      from: 0,
+      to: TO,
+      count: 5000,
+      durationMs: SPIN_DURATION_MS,
+    })
+
+    expect(gaps[0]).toBeGreaterThan(0)
+    expect(gaps[0], 'not the whole elapsed spin').toBeLessThan(times[0])
+    // Deep in the coast the wheel is decelerating, so the first kept gap sits
+    // at or below its neighbour — where the from-zero bug put it three orders
+    // of magnitude above.
+    expect(gaps[0]).toBeLessThanOrEqual(gaps[1])
+  })
 })

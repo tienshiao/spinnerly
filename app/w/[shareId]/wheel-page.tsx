@@ -177,11 +177,45 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
   const spinAgain = useCallback(() => {
     spin.dismiss()
 
+    /**
+     * Nothing to queue on a wheel that cannot spin. The freeze is view-only —
+     * `live` keeps flowing while the result is up — so a concurrent editor can
+     * delete the wheel down to one option during the four seconds this card
+     * covers. `spin()` would refuse anyway; skipping the timer means the modal
+     * closes onto a wheel whose disabled spin button is already explaining
+     * why nothing is moving, rather than onto 120ms of pending nothing.
+     */
+    if (!spin.canSpin) return
+
     if (respinTimer.current !== null) clearTimeout(respinTimer.current)
     respinTimer.current = setTimeout(() => {
       respinTimer.current = null
       spin.spin()
     }, SPIN_AGAIN_DELAY_MS)
+  }, [spin])
+
+  /**
+   * The spin button's own path in, and it exists to kill the queued re-spin.
+   *
+   * "Spin again" leaves `spin.spin()` sitting on a 120ms timer, and for that
+   * beat `spinning` is false — Base UI's `finalFocus` has just put focus back
+   * on this very button, enabled, so a second Enter inside the beat is not
+   * even clumsy. The press starts a spin at once; then the timer fires a
+   * callback CAPTURED while nothing was spinning, whose stale `spinning`
+   * sails through `spin()`'s guard and launches a second spin over the first —
+   * rotation retargeted mid-flight, a second whoosh and tick train over the
+   * one still playing, the settle timer replaced.
+   *
+   * Dropped rather than deferred, for the same reason `togglePreview` drops
+   * it: the direct press is the newer of the two intentions, and it is asking
+   * for exactly what the timer was going to do.
+   */
+  const startSpin = useCallback(() => {
+    if (respinTimer.current !== null) {
+      clearTimeout(respinTimer.current)
+      respinTimer.current = null
+    }
+    spin.spin()
   }, [spin])
 
   const onError = useCallback((message: string) => {
@@ -449,62 +483,33 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
 
           {role === 'editor' ? (
             <>
+              {/*
+                `focusableWhenDisabled`, because this button DISABLES ITSELF
+                under the keyboard user most entitled to be on it. Closing the
+                winner card puts focus back here — AC 4 — and both a direct
+                press and the queued "Spin again" then set `spinning` within
+                the beat. A natively disabled button is dropped from the tab
+                order, so the browser moves focus to `<body>`: a screen reader
+                announces nothing, or reads from the top of the document, for
+                the whole 4.4 seconds of a spin that user just started. Kept
+                focusable, the button holds focus and reads as what it is —
+                "Spinning…", unavailable — until the modal's `initialFocus`
+                takes over at the settle.
+
+                AC 5's announcement itself lives with the winner modal, inside
+                its portal — see the note there for why the page proper cannot
+                carry a live region that survives the modal opening.
+              */}
               <Button
                 ref={spinButtonRef}
                 size="lg"
-                onClick={spin.spin}
-                /*
-                  Four ways of saying "a spin is coming", earliest first, so the
-                  audio device has as long as possible to wake up. Opening one
-                  takes time this page does not control — hundreds of
-                  milliseconds for a Bluetooth link — and the first tick is 26ms
-                  after the click, so a cold device eats the whole opening
-                  flurry and leaves the flourish four seconds later sounding
-                  fine.
-
-                  A hover or a focus is worth far more than a press: seconds
-                  rather than the length of a click. Neither grants user
-                  activation on its own, which is why `warm` checks for it and
-                  declines on a page nobody has touched — see its note. The
-                  press is the backstop that always works, and it covers touch,
-                  where there is no hover to have.
-                */
-                onPointerEnter={spin.warm}
-                onFocus={spin.warm}
-                onPointerDown={spin.warm}
-                onKeyDown={spin.warm}
+                onClick={startSpin}
                 disabled={!spin.canSpin}
+                focusableWhenDisabled
                 className="px-[46px] py-4 text-xl shadow-[var(--shadow-md)]"
               >
                 {spin.spinning ? 'Spinning…' : 'Spin the wheel'}
               </Button>
-
-              {/*
-                AC 5, and it is a live region rather than the modal's own
-                announcement for two reasons. A `role="status"` only announces
-                CHANGES to a region that was already there, so one shipped
-                inside the card — which arrives with its text already in it —
-                would be silent on the browser and screen reader pairs that read
-                the spec strictly. And the modal is suppressed by nothing, but
-                its *entrance* is: under reduced motion the card appears with no
-                animation at all, and this is what guarantees the result is
-                spoken either way.
-
-                The wording matches the modal rather than repeating its whole
-                contents, so the two do not read as different events.
-
-                `aria-live` and `aria-atomic` rather than `role="status"`, which
-                is exactly what that role expands to. The notice strip above is
-                the page's one element with the status ROLE, and leaving it that
-                way keeps "the page is telling you something" and "the wheel
-                landed on this" distinguishable — to a screen reader user moving
-                by role, and to anyone querying for either.
-              */}
-              <p aria-live="polite" aria-atomic className="sr-only">
-                {spin.result === null
-                  ? ''
-                  : `Landed on ${spin.result.option.label}`}
-              </p>
 
               {/*
                 `onClose` is `dismiss`, and that is not a detail: the wheel

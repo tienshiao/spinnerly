@@ -607,7 +607,6 @@ describe('cleanup', () => {
 describe('the sound', () => {
   function sink() {
     return {
-      warm: vi.fn(),
       spin: vi.fn(),
       win: vi.fn(),
       cancel: vi.fn(),
@@ -664,23 +663,6 @@ describe('the sound', () => {
     expect(
       spinEase(schedule.times[schedule.times.length - 1] / SPIN_DURATION_MS),
     ).toBeCloseTo((travel - segment / 2) / travel, 6)
-  })
-
-  /**
-   * The head start. A device opening from cold — a Bluetooth link above all —
-   * swallows whatever is scheduled while it wakes, and the first click is 26ms
-   * after the spin begins, so a page that only opens the audio on the click
-   * loses the whole opening flurry and keeps the flourish four seconds later.
-   * The page wires this to the button's press rather than to its click.
-   */
-  it('can open the audio before there is anything to play', () => {
-    const sounds = sink()
-    const { result } = renderHook(() => useSpin(OPTIONS, picks(1), sounds))
-
-    act(() => result.current.warm())
-
-    expect(sounds.warm).toHaveBeenCalledTimes(1)
-    expect(sounds.spin, 'warming is not spinning').not.toHaveBeenCalled()
   })
 
   it('plays the flourish with the result, not before it', () => {

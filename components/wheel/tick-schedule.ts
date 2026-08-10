@@ -16,17 +16,17 @@
  */
 
 /**
- * The spin easing's control points — `cubic-bezier(0.16, 0.85, 0.16, 1)`, which
- * is `SPIN_EASING` in ./use-spin.ts.
- *
- * Duplicated as numbers rather than parsed from that string, and the tests hold
- * both to the same values. Parsing a CSS function to get four floats back is
- * more code and more failure than writing them twice.
+ * The spin easing's control points, and the ONLY place they are written.
+ * ./use-spin.ts builds its `cubic-bezier()` string from these — the sound and
+ * the animation must run the same curve, and two independent copies of it had
+ * no test tying them: retune one and both suites stay green while the clicks
+ * drift off the picture, which is the exact bug this module exists to prevent.
+ * Numbers building the string rather than the string being parsed, because
+ * parsing a CSS function to get four floats back is more code and more failure.
  */
-const EASE_X1 = 0.16
-const EASE_Y1 = 0.85
-const EASE_X2 = 0.16
-const EASE_Y2 = 1
+export const SPIN_EASE_POINTS = { x1: 0.16, y1: 0.85, x2: 0.16, y2: 1 } as const
+
+const { x1: EASE_X1, y1: EASE_Y1, x2: EASE_X2, y2: EASE_Y2 } = SPIN_EASE_POINTS
 
 /** A cubic Bézier's value at parameter `s`, for control points 0, a, b, 1. */
 function bezier(s: number, a: number, b: number): number {
@@ -101,7 +101,10 @@ export type TickSchedule = {
   times: number[]
   /**
    * The gap before each tick, in milliseconds, and so how fast the wheel was
-   * going when it clicked. `ticks[0]`'s gap is measured from the spin start.
+   * going when it clicked. `ticks[0]`'s gap is measured from the spin start —
+   * or, when `MAX_TICKS` has dropped the opening boundaries, from the last
+   * boundary dropped, so the first kept click still carries the speed the
+   * wheel actually had there rather than the whole elapsed spin.
    *
    * Carried alongside rather than left for the caller to difference, because
    * ./sounds.ts shapes each click from it — a wheel that is barely turning
@@ -161,13 +164,26 @@ export function tickSchedule({
   }
 
   const rotations: number[] = []
-  for (
-    let rotation = to - segment / 2;
-    rotation > from && rotations.length < MAX_TICKS;
-    rotation -= segment
-  ) {
-    rotations.push(rotation)
+  let boundary = to - segment / 2
+  while (boundary > from && rotations.length < MAX_TICKS) {
+    rotations.push(boundary)
+    boundary -= segment
   }
+
+  /**
+   * Where the first KEPT tick's gap is measured from. Normally the spin start
+   * — but when the cap above stopped the walk, `boundary` still names a real
+   * boundary the wheel crosses, just one whose click was dropped. Measuring
+   * the first kept gap from zero would then hand ./sounds.ts most of the
+   * elapsed spin as "the gap", and it would render the fastest kept click as
+   * the slowest, softest knock of the whole train, right before the bright
+   * ones. The dropped boundary's own time keeps the gap meaning what it means
+   * everywhere else: how fast the wheel was going.
+   */
+  const before =
+    boundary > from
+      ? durationMs * timeAtDistance((boundary - from) / travel)
+      : 0
 
   // Built backwards, so reverse before differencing. `reverse` mutates, which is
   // what is wanted on an array that has not left this function.
@@ -178,7 +194,7 @@ export function tickSchedule({
   )
 
   const gaps = times.map((time, index) =>
-    index === 0 ? time : time - times[index - 1],
+    index === 0 ? time - before : time - times[index - 1],
   )
 
   return { times, gaps }

@@ -12,7 +12,7 @@ import type { WheelOption } from '@/lib/wheels/model'
 
 import { targetRotation } from './geometry'
 import { createWheelSounds, type SoundSink } from './sounds'
-import { tickSchedule } from './tick-schedule'
+import { SPIN_EASE_POINTS, tickSchedule } from './tick-schedule'
 
 /**
  * The spin, as a state machine. Everything time-dependent about the wheel lives
@@ -28,8 +28,16 @@ import { tickSchedule } from './tick-schedule'
 /** The CSS transition, matching the prototype. */
 export const SPIN_DURATION_MS = 4300
 
-/** The easing. A long, slowing coast that settles rather than stops. */
-export const SPIN_EASING = 'cubic-bezier(0.16, 0.85, 0.16, 1)'
+/**
+ * The easing. A long, slowing coast that settles rather than stops.
+ *
+ * Built from the tick schedule's control points rather than written out,
+ * because the clicks are computed on the same curve this string hands to CSS
+ * — as two literals, a retune of either left the other silently unchanged and
+ * the sound drifting off the picture. ./use-spin.test.ts pins the assembled
+ * string, so the numbers cannot move without a test saying so.
+ */
+export const SPIN_EASING = `cubic-bezier(${SPIN_EASE_POINTS.x1}, ${SPIN_EASE_POINTS.y1}, ${SPIN_EASE_POINTS.x2}, ${SPIN_EASE_POINTS.y2})`
 
 /**
  * When the result is announced — 100ms after the transition ends.
@@ -146,20 +154,6 @@ export type SpinState = {
   /** False while spinning and below two options. AC 6. */
   canSpin: boolean
   reducedMotion: boolean
-  /**
-   * Open the audio device, ahead of a spin that has not happened yet.
-   *
-   * **Wire this to `pointerdown` and `keydown` on the spin button, not to the
-   * click.** By the time a click fires, the first tick is 26ms away and a
-   * device starting from cold — a Bluetooth link especially — is still waking
-   * up; what plays during that is not heard. A press gives it the time between
-   * pressing and releasing, which is the difference between a spin that ticks
-   * and one that only ever plays its flourish.
-   *
-   * Cheap, idempotent, and silent. It respects the mute preference, so it opens
-   * nothing for someone who has turned the sound off.
-   */
-  warm: () => void
   spin: () => void
   /**
    * Announce the result is done with: thaw, and go back to live options.
@@ -271,10 +265,6 @@ export function useSpin(
   }, [sounds])
 
   const canSpin = !spinning && live.length >= MIN_OPTIONS
-
-  const warm = useCallback(() => {
-    sounds.warm()
-  }, [sounds])
 
   const spin = useCallback(() => {
     if (spinning || live.length < MIN_OPTIONS) return
@@ -452,7 +442,6 @@ export function useSpin(
         : 'none',
     canSpin,
     reducedMotion,
-    warm,
     spin,
     dismiss,
   }

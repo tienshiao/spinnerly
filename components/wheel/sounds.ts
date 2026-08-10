@@ -24,37 +24,7 @@ import type { TickSchedule } from './tick-schedule'
 
 export type SoundSink = {
   /**
-   * Open the audio device, before there is anything to play through it.
-   *
-   * **Call this as soon as a spin looks likely — a hover, a focus, a press —
-   * rather than when the button is finally hit.** Starting an output stream
-   * from cold takes time the page does not control: tens of milliseconds for
-   * built-in speakers, and several hundred for a Bluetooth link, which has to
-   * negotiate before it carries anything. Whatever is scheduled during that
-   * window is not heard. The clicks are the casualty because they are
-   * front-loaded — the first is 26ms after the spin starts and half are gone
-   * inside a second — so a slow device eats the part that reads as ticking and
-   * leaves the flourish four seconds later untouched. Which is exactly how it
-   * was reported: no ticks, and the celebration always plays.
-   *
-   * **It declines to do anything on a page nobody has touched yet**, which is
-   * what makes it safe to wire to a hover. A context built without user
-   * activation is born `suspended`, logs the autoplay warning, and does not
-   * open a device — so it would buy nothing and cost a console message. Once
-   * the page has had any interaction at all, a hover is worth several hundred
-   * milliseconds of head start over a press.
-   *
-   * **Warming is not once per page, it is once per silence.** An output stream
-   * that has had nothing to carry is idled — by the browser, by the OS, by a
-   * Bluetooth headset dropping back to standby — and the next sound pays the
-   * wake-up all over again. Chrome's own tab audio indicator is a readable
-   * proxy for the state: while it is lit the clicks arrive, and once it has
-   * gone out the next spin loses them again. So this re-primes whenever the
-   * output has been quiet for a moment, and is otherwise free.
-   */
-  warm: () => void
-  /**
-   * Schedule a spin's clicks, starting now.
+   * Schedule a spin's sounds, starting now: the launch whoosh, then the clicks.
    *
    * Takes the whole schedule rather than being called per tick, because the
    * point is to hand the audio thread every start time up front and then leave
@@ -86,7 +56,6 @@ type ContextFactory = () => AudioContext
  * intended outcome, not a degraded one.
  */
 export const SILENT_SINK: SoundSink = {
-  warm: () => {},
   spin: () => {},
   win: () => {},
   cancel: () => {},
@@ -94,45 +63,93 @@ export const SILENT_SINK: SoundSink = {
 }
 
 /**
- * How far ahead of `currentTime` anything is scheduled.
+ * How far ahead of `currentTime` anything is scheduled: room for this thread
+ * to finish building and scheduling the other seventy sources before the first
+ * one is due. A `start(t)` whose `t` has already passed is clamped to "now"
+ * and plays immediately — late rather than lost, per the spec — so what the
+ * margin protects is the first few clicks landing IN STEP with the animation
+ * instead of bunched up behind a busy main thread.
  *
- * **Not a fudge factor.** `currentTime` is where the audio thread has rendered
- * TO, and the frames between there and the speaker have already been handed to
- * the device — `outputLatency` is how many. An event scheduled inside that
- * window is in the past by the time anyone could act on it, and the Web Audio
- * spec's answer is to play it immediately or not at all; either way it is not
- * where it was meant to be. The first click of a spin is 26ms out, which is
- * inside that window on plenty of machines, and the clicks after it are 25ms
- * apart — so what gets lost is the opening flurry, which is the part that
- * sounds like ticking.
- *
- * Added to the device's own reported latency rather than used instead of it,
- * because the two are different things: one is the buffer already committed,
- * the other is room for this thread to finish scheduling the other seventy
- * sources before the first one is due.
+ * **`outputLatency` is deliberately NOT added to this.** An earlier version
+ * did, on the theory that events scheduled inside the device's committed
+ * buffer are dropped. They are not — anything at or after `currentTime` is
+ * honoured, and `outputLatency` is a uniform delay on ALL audio, animation
+ * included in effect, so adding it compensated for nothing and pushed the
+ * whole sound train that much further behind the wheel. On Bluetooth
+ * headphones, which report 150–400ms, that was ticks audibly trailing the
+ * animation and still clicking after the wheel had visibly stopped. The
+ * cold-start losses that motivated it were the monitor's own noise gate —
+ * see `WHOOSH_S` — not the schedule (measured live, TASK-35).
  */
 const SCHEDULE_LEAD_S = 0.06
 
 /**
- * How long the output may be silent before the device is assumed to have gone
- * back to sleep, and so how stale a warm-up has to be before it is done again.
+ * The spin-up whoosh: a rising sweep of noise that launches the spin — and the
+ * reason the clicks after it can be heard at all on some hardware.
  *
- * Deliberately shorter than anything that actually idles a stream. Priming is
- * inaudible and costs a single 400ms buffer, so re-doing it when it was not
- * needed costs nothing worth measuring; skipping one that WAS needed costs the
- * whole opening flurry of a spin.
+ * Monitor and TV speakers run their input through a noise gate: a level
+ * detector that keeps the output muted until something worth passing arrives,
+ * and mutes it again a few seconds after the last such thing. A tick is 22ms
+ * of noise — its PEAK is respectable, but integrated over the window a gate
+ * measures it never crosses the threshold, so a cold spin's whole opening
+ * flurry is consumed on schedule and never leaves the speaker. The flourish
+ * always survived, being half a second of sustained tone per note; and a spin
+ * straight after another worked because the previous sounds were still holding
+ * the gate open. The Web Audio API reports none of this: on the machine that
+ * reported the bug, the clock advanced at 1x from 22ms after construction and
+ * `outputLatency` never moved, through silence and through swallowed ticks
+ * alike (measured live, TASK-35).
+ *
+ * **No inaudible priming can fix that** — quiet enough not to hear IS below
+ * the gate's threshold, by construction. An earlier version of this file
+ * warmed the device with 400ms of noise at -52 dBFS on the button's hover and
+ * press; it opened Chrome's output stream, which was never the bottleneck, and
+ * the gate never noticed it. The whoosh works WITH the gate instead: loud
+ * enough to be meant, it opens the gate at the moment the wheel launches, and
+ * the ticks follow inside the gate's release window — a window the "spin again
+ * while the tab's speaker icon is still lit" observation proved is seconds
+ * long, longer than the tick train it needs to cover.
+ *
+ * A gate needs a moment of over-threshold signal before it opens, so the first
+ * tick or two may still land under it on the strictest hardware. They are 25ms
+ * apart at that point — a texture, not countable clicks — and the whoosh is
+ * covering exactly that stretch with a louder sound.
  */
-const IDLE_SLEEP_S = 1
+const WHOOSH_S = 0.5
 
 /**
- * How long the priming sound lasts.
- *
- * Long enough to still be playing when a slow device finishes waking, which an
- * 80ms blip is not — the point is to hold the stream open across the wake-up,
- * not to poke it and let go. It also covers the usual gap between reaching for
- * a button and pressing it, so a hover leaves the device awake for the click.
+ * Like `TICK_GAIN`, greater than one because it is measured before the
+ * bandpass takes its cut — and like every level in this file, checked through
+ * an `OfflineAudioContext` rather than trusted: the sweep peaks at about
+ * -9 dBFS at the destination, level with the flourish, which is the one sound
+ * the gate demonstrably passes.
  */
-const PRIME_S = 0.4
+const WHOOSH_GAIN = 2.0
+
+/** Where the sweep starts and ends: low and throaty to bright, rising. */
+const WHOOSH_FROM_HZ = 300
+const WHOOSH_TO_HZ = 1500
+
+/**
+ * Narrower than a tick's `TICK_Q`, so the sweep reads as a pitch rising — a
+ * wheel being launched — rather than as a burst of static that happens to
+ * brighten.
+ */
+const WHOOSH_Q = 1.4
+
+/** The swell. Fast enough that the gate is open by the earliest clicks. */
+const WHOOSH_ATTACK_S = 0.04
+
+/**
+ * How long the envelope HOLDS at peak before releasing, and it is the part a
+ * first draft cuts. An attack straight into an exponential decay leaves the
+ * sweep's sustained level 15 dB down (measured; the shape of the previous
+ * paragraph's warning) — a transient, which is exactly the kind of signal a
+ * gate's detector is built to ignore. The hold is what a gate integrates; the
+ * flat envelope does not sound flat because the rising sweep widens the band
+ * it passes, a crescendo the filter provides for free.
+ */
+const WHOOSH_HOLD_S = 0.25
 
 /**
  * How loud, at most. Well under unity — this plays over a room, not into one.
@@ -211,45 +228,53 @@ const SLOW_GAP_MS = 400
 const TICK_FAST_HZ = 2400
 const TICK_SLOW_HZ = 900
 
-/** The flourish: C5, E5, G5, C6, a major arpeggio with the octave on top. */
-const WIN_NOTES_HZ = [523.25, 659.25, 783.99, 1046.5]
+/**
+ * The win is a TA-DA: one short pickup note, then the whole chord landing
+ * together and ringing out. An earlier version was an arpeggio — the same
+ * pitches struck 85ms apart — and it read as a sparkle rather than an
+ * announcement. The rhythm is what says "ta-da", not the pitches: an upbeat,
+ * then the landing.
+ *
+ * The pickup is G5 — the dominant, so the chord it leads to is a resolution
+ * rather than just a louder thing that happens next.
+ */
+const WIN_PICKUP_HZ = 783.99
 
-/** How far apart the flourish's notes are struck. */
-const WIN_NOTE_GAP_S = 0.085
-
-/** How long a flourish note takes to fade. */
-const WIN_DECAY_S = 0.55
+/** Short enough to be an upbeat rather than a note in its own right. */
+const WIN_PICKUP_S = 0.15
 
 /**
- * Loud enough to be the payoff. An oscillator loses nothing on the way to the
- * destination, so unlike the click this reads as what it is: the flourish peaks
- * at about -9 dBFS, a shade above the clicks it follows.
+ * The "da": C major with the octave on top, plus a root an octave below
+ * anything the old arpeggio had — the low C is the chest the landing lands on.
  */
-const WIN_GAIN = 0.6
+const WIN_CHORD_HZ = [261.63, 523.25, 659.25, 783.99, 1046.5]
+
+/** The chord lands straight off the pickup's decay. */
+const WIN_CHORD_AT_S = 0.15
+
+/**
+ * How long the chord rings. Longer than the old arpeggio's fade on purpose —
+ * the "daa" is the sustain — but still gone inside a breath of the modal
+ * opening it plays under.
+ */
+const WIN_CHORD_S = 0.9
+
+/**
+ * Measured, like every level in this file (`OfflineAudioContext`, see
+ * `MASTER_GAIN`) — and the chord's per-note gain LOOKS like a typo next to the
+ * pickup's until the summing is remembered: five triangles land together, so
+ * each note carries a fifth of the payoff. As set, the sound peaks at
+ * -9.4 dBFS at the destination, on the chord's onset, level with the whoosh
+ * and the clicks; the pickup alone sits about a decibel and a half under.
+ * Both numbers move together or the shape inverts — by 0.16 on the chord the
+ * pickup is the loudest thing in the sound, which is "ta-DA" backwards.
+ */
+const WIN_PICKUP_GAIN = 0.6
+const WIN_CHORD_GAIN = 0.2
 
 function defaultFactory(): AudioContext {
   const Ctor = globalThis.AudioContext
   return new Ctor()
-}
-
-/**
- * Whether this document has ever been interacted with — the condition every
- * browser's autoplay policy actually tests before it lets a context start.
- *
- * STICKY activation, not transient: the question is "has this page ever been
- * touched", not "is a gesture running right now". That distinction is the whole
- * reason a hover can usefully open the audio at all — a `pointerenter` grants
- * no activation of its own, but on a page where something has already been
- * clicked, one is not needed.
- *
- * Absent in Safari, where the answer is `true` rather than `false`. Guessing
- * wrong in that direction costs a suspended context and a console warning on a
- * page that was never going to make a sound anyway; guessing the other way
- * would mean no sound at all on a browser that would have played it.
- */
-function everActivated(): boolean {
-  const activation = globalThis.navigator?.userActivation
-  return activation === undefined ? true : activation.hasBeenActive
 }
 
 /** Whether this browser can make a sound at all. */
@@ -272,17 +297,6 @@ export function createWheelSounds(createContext?: ContextFactory): SoundSink {
   let context: AudioContext | null = null
   let master: GainNode | null = null
   let noise: AudioBuffer | null = null
-
-  /**
-   * When the last sound this sink scheduled finishes, on the audio clock — and
-   * so when the output starts being silent.
-   *
-   * `-Infinity` rather than 0 so that a context which has never played anything
-   * counts as having been quiet forever, and the first warm-up goes ahead. With
-   * 0 it would read as "sound ended at the very moment we are asking", which on
-   * a fresh context is exactly now.
-   */
-  let quietFrom = Number.NEGATIVE_INFINITY
 
   /** Detaches the mute listener. Null until there is a context to listen for. */
   let stopListening: (() => void) | null = null
@@ -333,7 +347,11 @@ export function createWheelSounds(createContext?: ContextFactory): SoundSink {
         })
       }
 
-      if (context.state === 'suspended') void context.resume()
+      // With a rejection handler even though the resolution is not waited on:
+      // iOS Safari rejects `resume()` on a context the OS has interrupted, and
+      // `win()` runs four seconds after the gesture that could have satisfied
+      // it. The next call retries; the rejection itself is only console noise.
+      if (context.state === 'suspended') void context.resume().catch(() => {})
     } catch {
       /**
        * A browser that refuses to build a context — too many open, or the API
@@ -345,7 +363,15 @@ export function createWheelSounds(createContext?: ContextFactory): SoundSink {
        * later call would skip the branch above and fall out at the `master ===
        * null` check. That is a sink which is silent for the life of the page
        * because one call failed once.
+       *
+       * And CLOSED, not merely dropped, when the context itself was the part
+       * that succeeded: a context abandoned open keeps its claim on the audio
+       * device, and browsers cap how many may exist at once — so every retry
+       * that failed the same way would mint another, until the cap makes even
+       * the retry path fail for good. Closing is exactly the recovery the cap
+       * error asks for.
        */
+      void context?.close().catch(() => {})
       context = null
       master = null
       return null
@@ -372,19 +398,6 @@ export function createWheelSounds(createContext?: ContextFactory): SoundSink {
 
     noise = buffer
     return buffer
-  }
-
-  /**
-   * How far ahead of the audio clock to schedule, on this context, right now.
-   *
-   * `outputLatency` is what the device has already taken and cannot be told to
-   * change; it is 0 on a context whose stream has not started, and a real
-   * number afterwards, which is another reason to warm up before scheduling
-   * anything that matters.
-   */
-  function leadIn(ctx: AudioContext): number {
-    const output = Number.isFinite(ctx.outputLatency) ? ctx.outputLatency : 0
-    return SCHEDULE_LEAD_S + output
   }
 
   /** Forgets a source once it has finished, so `playing` cannot grow forever. */
@@ -443,6 +456,71 @@ export function createWheelSounds(createContext?: ContextFactory): SoundSink {
     track(source)
   }
 
+  /** The launch — and the gate opener. See `WHOOSH_S` for why it must exist. */
+  function scheduleWhoosh(ctx: AudioContext, out: GainNode, at: number): void {
+    const source = ctx.createBufferSource()
+    source.buffer = noiseBuffer(ctx)
+    // The buffer is a tenth of a second and the whoosh is longer; an unlooped
+    // source would go silent mid-swell.
+    source.loop = true
+
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.setValueAtTime(WHOOSH_FROM_HZ, at)
+    // Exponential rather than linear, because pitch is heard in ratios: a
+    // linear sweep spends most of its time sounding nearly-arrived.
+    filter.frequency.exponentialRampToValueAtTime(WHOOSH_TO_HZ, at + WHOOSH_S)
+    filter.Q.value = WHOOSH_Q
+
+    const envelope = ctx.createGain()
+    envelope.gain.setValueAtTime(0, at)
+    envelope.gain.linearRampToValueAtTime(WHOOSH_GAIN, at + WHOOSH_ATTACK_S)
+    // The hold needs its own event: an exponential ramp interpolates from the
+    // PREVIOUS event, so without this the release would begin at the top of
+    // the attack and hollow out the sustain the gate is listening for.
+    envelope.gain.setValueAtTime(
+      WHOOSH_GAIN,
+      at + WHOOSH_ATTACK_S + WHOOSH_HOLD_S,
+    )
+    envelope.gain.exponentialRampToValueAtTime(0.0001, at + WHOOSH_S)
+
+    source.connect(filter)
+    filter.connect(envelope)
+    envelope.connect(out)
+
+    source.start(at)
+    source.stop(at + WHOOSH_S)
+    track(source)
+  }
+
+  /** One note of the ta-da: a triangle through its own envelope. */
+  function scheduleNote(
+    ctx: AudioContext,
+    out: GainNode,
+    hz: number,
+    at: number,
+    peak: number,
+    decayS: number,
+  ): void {
+    const oscillator = ctx.createOscillator()
+    // Triangle rather than sine: a sine is so pure it reads as a test tone,
+    // and a square or saw is bright enough to be shrill an octave up.
+    oscillator.type = 'triangle'
+    oscillator.frequency.value = hz
+
+    const envelope = ctx.createGain()
+    envelope.gain.setValueAtTime(0, at)
+    envelope.gain.linearRampToValueAtTime(peak, at + 0.012)
+    envelope.gain.exponentialRampToValueAtTime(0.0001, at + decayS)
+
+    oscillator.connect(envelope)
+    envelope.connect(out)
+
+    oscillator.start(at)
+    oscillator.stop(at + decayS)
+    track(oscillator)
+  }
+
   /**
    * A plain function rather than a method on the returned object, so that
    * `dispose` can call it without a `this` that a destructured
@@ -462,56 +540,16 @@ export function createWheelSounds(createContext?: ContextFactory): SoundSink {
   }
 
   return {
-    warm() {
-      // Before `ensure`, so that a hover on an untouched page does not build
-      // the very thing the autoplay policy would refuse to start.
-      if (!everActivated()) return
-
-      const audio = ensure()
-      if (audio === null) return
-
-      // Still carrying sound, or only just stopped: the device is awake and
-      // there is nothing to do. This is what makes the call cheap enough to
-      // wire to a hover, a focus and a press all at once.
-      if (audio.context.currentTime - quietFrom < IDLE_SLEEP_S) return
-
-      /**
-       * A sound, rather than merely a context.
-       *
-       * Constructing an `AudioContext` asks the browser for an output stream;
-       * it does not guarantee the device is producing anything yet, and some
-       * drivers — Bluetooth above all — stay asleep until a stream is actually
-       * carrying signal. So this plays one: the same noise the clicks are made
-       * of, at a gain four hundred times below them, which lands near -50 dBFS
-       * — under the noise floor of any room this runs in, and under the
-       * threshold at which a browser calls a tab audible, but not silence.
-       */
-      const at = audio.context.currentTime + SCHEDULE_LEAD_S
-      const source = audio.context.createBufferSource()
-      source.buffer = noiseBuffer(audio.context)
-      // The buffer is a tenth of a second and the prime is longer, so it has to
-      // repeat rather than stop and leave the stream empty again.
-      source.loop = true
-
-      const envelope = audio.context.createGain()
-      envelope.gain.setValueAtTime(TICK_GAIN / 400, at)
-
-      source.connect(envelope)
-      envelope.connect(audio.master)
-      source.start(at)
-      source.stop(at + PRIME_S)
-      track(source)
-      quietFrom = at + PRIME_S
-    },
-
     spin(schedule) {
       const audio = ensure()
       if (audio === null) return
 
-      // Not `currentTime` itself: the first click is 26ms out, which is inside
-      // the buffer the device has already been given on plenty of machines.
-      // See `SCHEDULE_LEAD_S`.
-      const start = audio.context.currentTime + leadIn(audio.context)
+      // Not `currentTime` itself: the first click is 26ms out, and the margin
+      // is what keeps it from being clamped to "now" while this thread is
+      // still scheduling the other seventy. See `SCHEDULE_LEAD_S`.
+      const start = audio.context.currentTime + SCHEDULE_LEAD_S
+
+      scheduleWhoosh(audio.context, audio.master, start)
 
       schedule.times.forEach((offsetMs, index) => {
         scheduleTick(
@@ -521,47 +559,38 @@ export function createWheelSounds(createContext?: ContextFactory): SoundSink {
           schedule.gaps[index],
         )
       })
-
-      // A spin is nearly three seconds of clicks, so nothing needs waking again
-      // until well after it — including by the press of "Spin again".
-      const last = schedule.times[schedule.times.length - 1] ?? 0
-      quietFrom = Math.max(quietFrom, start + last / 1000 + TICK_DECAY_S)
     },
 
     win() {
       const audio = ensure()
       if (audio === null) return
 
-      // The same lead-in as the clicks. This one has always been heard — it
-      // lands four seconds into a running context — but there is no version of
-      // "schedule inside what the device already has" that is correct.
-      const start = audio.context.currentTime + leadIn(audio.context)
+      // The same margin as the clicks, and for the same reason: six sources
+      // to build before the first is due.
+      const start = audio.context.currentTime + SCHEDULE_LEAD_S
 
-      WIN_NOTES_HZ.forEach((hz, index) => {
-        const at = start + index * WIN_NOTE_GAP_S
-        const oscillator = audio.context.createOscillator()
-        // Triangle rather than sine: a sine is so pure it reads as a test tone,
-        // and a square or saw is bright enough to be shrill four notes up.
-        oscillator.type = 'triangle'
-        oscillator.frequency.value = hz
-
-        const envelope = audio.context.createGain()
-        envelope.gain.setValueAtTime(0, at)
-        envelope.gain.linearRampToValueAtTime(WIN_GAIN, at + 0.012)
-        envelope.gain.exponentialRampToValueAtTime(0.0001, at + WIN_DECAY_S)
-
-        oscillator.connect(envelope)
-        envelope.connect(audio.master)
-
-        oscillator.start(at)
-        oscillator.stop(at + WIN_DECAY_S)
-        track(oscillator)
-      })
-
-      quietFrom = Math.max(
-        quietFrom,
-        start + (WIN_NOTES_HZ.length - 1) * WIN_NOTE_GAP_S + WIN_DECAY_S,
+      // The "ta" — the upbeat, alone.
+      scheduleNote(
+        audio.context,
+        audio.master,
+        WIN_PICKUP_HZ,
+        start,
+        WIN_PICKUP_GAIN,
+        WIN_PICKUP_S,
       )
+
+      // The "da" — the whole chord at once. Together on purpose: staggering
+      // these is the arpeggio this sound used to be.
+      for (const hz of WIN_CHORD_HZ) {
+        scheduleNote(
+          audio.context,
+          audio.master,
+          hz,
+          start + WIN_CHORD_AT_S,
+          WIN_CHORD_GAIN,
+          WIN_CHORD_S,
+        )
+      }
     },
 
     cancel,
@@ -576,7 +605,6 @@ export function createWheelSounds(createContext?: ContextFactory): SoundSink {
       context = null
       master = null
       noise = null
-      quietFrom = Number.NEGATIVE_INFINITY
 
       // Closing frees the audio hardware; a page that unmounts with a context
       // open keeps a thread alive for a wheel nobody is looking at any more.
