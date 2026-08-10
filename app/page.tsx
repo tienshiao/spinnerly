@@ -1,5 +1,11 @@
 import { Badge } from '@/components/ui/badge'
-import { conicFromPalette, sliceColors } from './wheel-palette'
+import {
+  DISC_SHADOW,
+  WheelDisc,
+  WheelMark,
+  WheelPointer,
+} from '@/components/wheel/disc'
+import { DECORATIVE_SLICES, sliceColors } from './wheel-palette'
 import { CreateWheelButton, CreateWheelProvider } from './create-wheel-button'
 import './landing.css'
 
@@ -36,11 +42,11 @@ import './landing.css'
 
 /* Colours drawn from the wheel palette rather than repeated as literals, so a
  * retune of the slice colours carries through to the page that advertises them.
- * Each index list names the prototype's exact sequence — the hero wheel skips
- * SLICE[7] (the pink) and closes on SLICE[8], which is why these are explicit
- * index lists rather than a `.slice(0, n)`. */
-const HERO_WHEEL_SLICES = [0, 1, 2, 3, 4, 5, 6, 8] as const
-const BRAND_MARK_SLICES = [0, 1, 2, 4] as const
+ *
+ * The hero wheel's sequence and the brand mark's now live in wheel-palette.ts as
+ * DECORATIVE_SLICES and BRAND_MARK_SLICES, because the Open Graph cards draw the
+ * same two things and had drifted to different colours. The row of avatars is
+ * this page's alone. */
 const AVATAR_SLICES = [0, 2, 1, 4] as const
 
 /* The three use-case pills with no counterpart in the theme ramps. The accent
@@ -149,11 +155,7 @@ export default function Home() {
             className={`relative flex flex-wrap items-center justify-between gap-5 py-[22px] ${GUTTER}`}
           >
             <div className="flex items-center gap-3">
-              <div
-                className="rounded-pill size-[38px] shadow-[inset_0_0_0_5px_#fff]"
-                style={{ background: conicFromPalette(BRAND_MARK_SLICES) }}
-                aria-hidden="true"
-              />
+              <WheelMark className="size-[38px]" />
               <span className="font-heading text-[22px]">Spinnerly</span>
             </div>
             <nav className="flex items-center gap-6.5 text-[15px]">
@@ -206,20 +208,23 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* The same drawing the wheel page and the share cards use —
+                  components/wheel/disc.tsx. It was a conic-gradient here, which
+                  gave the hero a wheel with no dividers between its slices and a
+                  hub half again the size of the real one. The rim comes from the
+                  backdrop circle inside the SVG now, so the white padded box
+                  that used to supply it is gone.
+
+                  `landing-turn` moves to the svg: it is the disc that turns, and
+                  the pointer it turns under must not. */}
               <div className="flex justify-center" aria-hidden="true">
                 <div className="relative w-[min(420px,100%)]">
-                  {/* The pointer. A CSS triangle, as in the prototype. */}
-                  <div className="border-t-accent-600 absolute -top-2 left-1/2 z-2 size-0 -translate-x-1/2 border-x-[15px] border-t-[30px] border-x-transparent" />
-                  <div className="rounded-pill bg-surface aspect-square w-full p-2.5 shadow-lg">
-                    <div
-                      className="landing-turn rounded-pill relative size-full"
-                      style={{
-                        background: conicFromPalette(HERO_WHEEL_SLICES),
-                      }}
-                    >
-                      <div className="bg-surface rounded-pill border-accent absolute inset-[38%] border-5" />
-                    </div>
-                  </div>
+                  <WheelPointer />
+                  <WheelDisc
+                    slices={DECORATIVE_SLICES.map((palette) => ({ palette }))}
+                    className="landing-turn block w-full"
+                    style={{ filter: `drop-shadow(${DISC_SHADOW})` }}
+                  />
                 </div>
               </div>
             </section>

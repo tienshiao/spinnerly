@@ -13,7 +13,6 @@ import {
   POINTER_ANGLE,
   RADIUS,
   VIEWBOX,
-  WEDGE_STROKE,
   labelPlacement,
   midAngle,
   normalizeDegrees,
@@ -55,7 +54,6 @@ describe('constants', () => {
     expect(RADIUS).toBe(190)
     expect(BACKDROP_RADIUS).toBe(198)
     expect(HUB_RADIUS).toBe(34)
-    expect(WEDGE_STROKE).toBe(3)
     expect(HUB_STROKE).toBe(5)
     expect(LABEL_RADIUS_RATIO).toBe(0.62)
     expect(POINTER_ANGLE).toBe(-90)

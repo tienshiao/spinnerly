@@ -33,23 +33,41 @@ export const CENTER = 200
 export const RADIUS = 190
 
 /**
- * A white disc behind the wedges, eight units proud of them.
+ * A white disc behind the wedges, eight units proud of them. The wheel's rim.
  *
- * It is what gives the wheel its rim: the wedges are stroked white at
- * `WEDGE_STROKE`, and a stroke straddles the path rather than sitting inside
- * it, so the outer edge of the arc would otherwise be a half-width of white
- * fading into whatever is behind the SVG. The backdrop makes that deliberate.
+ * The wedges are drawn edge to edge with nothing between them, so this is the
+ * only white in the drawing apart from the hub, and it is what separates the
+ * colours from whatever is behind the SVG — on the landing page, a background
+ * they would otherwise sit flat against.
  */
 export const BACKDROP_RADIUS = 198
 
 /** The white hub sitting on top of the wedge points. */
 export const HUB_RADIUS = 34
 
-/** White, and 3 units wide, between adjacent wedges. */
-export const WEDGE_STROKE = 3
-
 /** The hub's accent ring. */
 export const HUB_STROKE = 5
+
+/**
+ * The pointer, in **CSS pixels** rather than viewBox units.
+ *
+ * The one part of the wheel that does not scale with the disc, and deliberately:
+ * it is drawn outside the SVG — everything inside rotates — so it has no access
+ * to the viewBox, and the three surfaces that draw a wheel render it at
+ * noticeably different sizes. A fixed pointer reads as the same mark on all of
+ * them; a proportional one would be a different mark on each.
+ *
+ * `WIDTH` is the full base, so a CSS triangle takes half of it on each side.
+ * `RISE` is how far the tip sits above the disc's box, which is what makes the
+ * pointer read as resting on the rim rather than floating over it.
+ *
+ * Values are the prototype's (docs/spin-the-wheel-editor/project/Wheel.dc.html)
+ * and are shared by ./disc.tsx, the landing hero and the Open Graph card so
+ * those three cannot drift apart again.
+ */
+export const POINTER_WIDTH = 34
+export const POINTER_HEIGHT = 34
+export const POINTER_RISE = 6
 
 /**
  * Where a label sits, as a fraction of `RADIUS`.
@@ -95,15 +113,15 @@ export function normalizeDegrees(degrees: number): number {
 /**
  * The angular width of one wedge, in degrees.
  *
- * `Math.max(count, 1)` guards the empty wheel: a zero count would make this
- * `Infinity` and every coordinate derived from it `NaN`, which SVG renders as
- * nothing at all — no error, just a blank disc.
+ * `Math.max(count, 1)` guards a zero count, which would make this `Infinity` and
+ * every coordinate derived from it `NaN` — which SVG renders as nothing at all,
+ * with no error and no blank-disc placeholder to notice.
  *
- * The guard is load-bearing rather than merely defensive, because ./wheel.tsx
- * does call the per-wedge functions with no wedges: an empty wheel is drawn as
- * `wedgePath(0, 0)`, which the floor turns into the same full disc a
- * single-option wheel gets. Removing it would not throw — it would silently
- * draw nothing.
+ * Defensive rather than load-bearing today: ./wheel.tsx used to draw the empty
+ * wheel as `wedgePath(0, 0)` and lean on this floor, but `slicesFor` now hands
+ * it one blank slice, so the call is `wedgePath(0, 1)` and no caller passes zero.
+ * The guard stays because the failure it prevents is invisible, and because
+ * `slices.length` reaching here is one refactor away from being zero again.
  */
 export function segmentAngle(count: number): number {
   return TAU_DEGREES / Math.max(count, 1)

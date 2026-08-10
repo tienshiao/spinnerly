@@ -4,7 +4,7 @@ import { render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
-import { PALETTE_LENGTH, SLICE } from '@/app/wheel-palette'
+import { PALETTE_LENGTH, SLICE, sliceColors } from '@/app/wheel-palette'
 import type { WheelOption } from '@/lib/wheels/model'
 
 import {
@@ -12,7 +12,6 @@ import {
   CENTER,
   HUB_RADIUS,
   LABEL_TRUNCATE,
-  WEDGE_STROKE,
   wedgePath,
 } from './geometry'
 import { Wheel } from './wheel'
@@ -58,9 +57,19 @@ describe('the wedges', () => {
 
     paths.forEach((path, index) => {
       expect(path.getAttribute('d')).toBe(wedgePath(index, OPTIONS.length))
-      expect(path.getAttribute('stroke')).toBe('#ffffff')
-      expect(path.getAttribute('stroke-width')).toBe(String(WEDGE_STROKE))
     })
+  })
+
+  /**
+   * The wedges meet edge to edge. They were stroked white for a while, which
+   * put a divider between every pair and made the wheel a different object from
+   * the brand mark beside it — the mark has never had one.
+   */
+  it('draws no divider between them', () => {
+    const { container } = renderWheel()
+    for (const path of container.querySelectorAll('path')) {
+      expect(path.getAttribute('stroke')).toBeNull()
+    }
   })
 
   it('fills from the palette in order', () => {
@@ -73,7 +82,14 @@ describe('the wedges', () => {
 
   /**
    * A wheel can hold `OPTIONS_MAX` options against a palette of ten, so the
-   * eleventh has to come back round to the first rather than render undefined.
+   * eleventh has to come back round rather than render undefined.
+   *
+   * Asserted through `sliceColors` rather than against literals, because which
+   * colour position 11 takes is that function's business and is tested in
+   * app/wheel-palette.test.ts — including the rule this component would
+   * otherwise be quietly restating, that the first colour is reserved so a
+   * wheel's last slice can never match its first. What is checked here is that
+   * this component asks rather than deciding for itself.
    */
   it('wraps the palette past its length', () => {
     const many = Array.from({ length: PALETTE_LENGTH + 3 }, (_, i) =>
@@ -84,9 +100,12 @@ describe('the wedges', () => {
       path.getAttribute('fill'),
     )
 
-    expect(fills[PALETTE_LENGTH]).toBe(SLICE[0])
-    expect(fills[PALETTE_LENGTH + 2]).toBe(SLICE[2])
+    expect(fills).toEqual(many.map((_, i) => sliceColors(i).fill))
     expect(fills).not.toContain(null)
+    expect(
+      new Set(fills).size,
+      'the palette recurs rather than running out',
+    ).toBe(PALETTE_LENGTH)
   })
 
   /**
@@ -185,10 +204,21 @@ describe('the labels', () => {
 })
 
 describe('the disc', () => {
+  /**
+   * SVG has no z-index, so this order IS the stacking: the backdrop is the rim
+   * the wedges sit inside, and the hub covers the spike where every wedge point
+   * meets.
+   *
+   * Read from inside the group ./disc.tsx wraps the drawing in — a group rather
+   * than a fragment because Satori renders only a fragment's first child, which
+   * left the Open Graph card a bare white disc.
+   */
   it('places the backdrop behind the wedges and the hub on top', () => {
     const { container } = renderWheel()
-    const children = [...(container.querySelector('svg')?.children ?? [])]
+    const disc = container.querySelector('svg > g')
+    const children = [...(disc?.children ?? [])]
 
+    expect(disc, 'the disc group').not.toBeNull()
     expect(children[0].tagName.toLowerCase()).toBe('circle')
     expect(children[0].getAttribute('r')).toBe(String(BACKDROP_RADIUS))
     expect(children[children.length - 1].getAttribute('r')).toBe(
