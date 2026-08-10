@@ -1,11 +1,11 @@
 ---
 id: TASK-21
 title: Build the create-wheel flow and the share and preview controls
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:39'
-updated_date: '2026-08-09 22:51'
+updated_date: '2026-08-10 01:42'
 labels: []
 dependencies:
   - TASK-17
@@ -100,6 +100,29 @@ Verification beyond the suite:
 - One test was found to be asserting nothing and fixed: the selection-restore case passed just as happily with the restore disabled, because jsdom's select() leaves document.getSelection() alone. The stub now clears the selection at the point a browser would, and the case fails when the restore is removed. Verified in both directions.
 
 Not in scope, and stated so the reviewer does not look for it: 'See a live one' and the nav's 'Open a wheel' are still inert. Both are TASK-22's, which now holds one real question — what a demo wheel is, given it needs an owner, a mutation policy and something to reset it.
+
+Post-review pass, after the notes above were written. Six findings from /code-review, all fixed here rather than filed, plus four changes the user asked for on the shipped result. Unit suite now 878 (from 865); typecheck, lint, format:check and the production build clean, and / is still statically rendered.
+
+TWO NOTES ABOVE ARE NOW SUPERSEDED, and both were load-bearing enough to be worth correcting rather than leaving for a reader to trip over:
+
+- "THE READ IS A useState INITIALIZER" no longer describes the code. The initializer ran on the FIRST render, which is the loading render — before either gate has opened. A first snapshot that then 404'd or errored rendered the standalone error page instead, and the reload that succeeded found an empty storage slot: no warning, on the one page whose URL is the only key to the wheel, for the person who had just created it. The read now happens below every gate, on the render that actually draws the strip, as a plain call rather than a hook — which is legal there precisely because it is no longer a hook. The argument against an effect still stands; it just is not what decided the shape.
+- "CREATED IS STATE, WHICH IS WHAT MAKES THE PRECEDENCE SAFE" is right about the requirement and wrong about the mechanism. What keeps a failure from consuming the warning is the per-share-ID memo in lib/wheels/new-wheel.ts, not React state — every later render gets the remembered answer instead of re-spending the slot.
+
+The findings:
+
+- THE DUPLICATE FLOW NEVER MARKED ITS FORK. A fork's token is minted exactly once too, so a participant duplicating an orphaned wheel landed as its only editor with nothing having warned them. Same one-line call the create flow makes.
+- THE ONE-SHOT FLAG WAS SPENT ON A RENDER THAT COULD NOT SHOW IT. See above.
+- consumeWheelCreated CACHED ON THE SERVER. It runs during the SSR of a client component, where storage() is always undefined, so every request added an entry to a module-level Map that nothing bounds or clears — one per distinct share ID ever requested, for the life of the process. It now returns before caching when there is no storage; the answer is false by construction there, so idempotence holds without the map.
+- A TRAILING .catch ALSO CATCHES THE SUCCESS HANDLER. A throw out of router.push would have re-enabled the button under "That wheel could not be made" when the wheel was in fact made and its only token had just unwound with the closure — the next click orphaning it. Both create and duplicate now pass the rejection handler as then's second argument, so it can only see what the request rejected with.
+- THE IN-FLIGHT GUARD WAS PER-BUTTON, NOT PER-PAGE. The landing page renders two of these, the old page stays interactive through an App Router transition, and api-client budgets 1-2s for a cold-start first write. CreateWheelProvider now holds one claim for both; a button with no provider falls back to its own, so a lone call site still works. pending is shared, failure stays local.
+- THE CLIPBOARD FALLBACK DID NOT RESTORE FOCUS. It restored the selection but not the focused element, so a keyboard user on exactly the insecure-context build the fallback exists for was returned to the top of the document. Focus is restored before the selection, because focus() collapses the selection in some engines.
+
+Then four changes on the shipped result:
+
+- AN EMPTY WHEEL DRAWS AS ONE BLANK SLICE. It was a neutral-100 disc inside a white rim under a drop shadow, which reads as a component that failed to load rather than as a wheel waiting for its first option - and that is the state every new wheel opens in. wedgePath(0, 0) is the same full disc a one-option wheel gets, since segmentAngle floors the count at 1. That guard is now load-bearing rather than defensive, and its comment says so.
+- THE HEADER MOVED ON THE PREVIEW TOGGLE. WheelTitle rendered the editable state as a padded button and the read-only state as a bare span, so flipping editable took 4px off the title's width and 4px off its height. The title column is the tallest thing in the header's left group, so the whole header changed height. It also broke the alignment of the "Spinnerly" line below, which carries its own px-1 to sit flush with title text it only matched in one of the two states.
+- "OPTION", NOT "SPOT". The prototype's word, carried into this task's and TASK-18/19's descriptions. It reads as a lunch venue and narrows the product to the one use case the mockup happens to show, while the landing page sells the general tool. Both placeholders were already contradicting their own aria-labels, which said "option" all along. Recorded in design doc section 8 so the next prototype port does not reintroduce it. The TASK-18 and TASK-19 descriptions still quote the old strings.
+- THE TITLE OPENS FOCUSED ON ARRIVAL. A wheel arrives called "Untitled wheel" and naming it is what its creator came here to do, so the field opens with the title selected instead of waiting to be found behind a hover state that says nothing on a touch screen. Driven by the same created signal as the warning, read once as initial state so a dismissal is final. The blur this adds to every new wheel is a no-op: commit() returns early when the title is unchanged, so there is no rename nobody made and no expiry slide from one.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -114,9 +137,13 @@ Decision 16: the header controls this task builds now include an overflow menu a
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Built the create-wheel flow: the landing page's two 'Make a wheel' buttons post to /api/wheels and navigate to /w/{shareId}#e={editToken}, with the token reaching the fragment and nothing else. Added a real clipboard fallback behind the copy button, and a one-time warning on a freshly created wheel that the edit URL is the only key and cannot be recovered. The preview toggle and participant-reachable duplicate were already in place from TASK-17 and TASK-19 and are covered by existing tests.
+Built the create-wheel flow: the landing page's two 'Make a wheel' buttons post to /api/wheels and navigate to /w/{shareId}#e={editToken}, with the token reaching the fragment and nothing else. Added a real clipboard fallback behind the copy button, and a one-time warning on a freshly created wheel that the edit URL is the only key and cannot be recovered. The title now opens as a focused field on arrival, so naming the wheel is the opening move rather than a discovery. The preview toggle and participant-reachable duplicate were already in place from TASK-17 and TASK-19 and are covered by existing tests.
 
-Verified with the unit suite at 865 (up from 829), typecheck, lint, format:check and a production build, plus a hand-driven pass in Chrome against the emulator — because every test here mocks next/navigation, and that the fragment survives a real router.push is the one claim the suite cannot make. AC 2 was additionally checked against real server logs, which carry the shareId alone.
+Verified with the unit suite at 878 (up from 829), typecheck, lint, format:check and a production build, plus a hand-driven pass in Chrome against the emulator - because every test here mocks next/navigation, and that the fragment survives a real router.push is the one claim the suite cannot make. AC 2 was additionally checked against real server logs, which carry the shareId alone.
+
+Six review findings were fixed rather than filed, four of them about the same thing from different directions: a token that exists exactly once must not be dropped. The duplicate flow was not marking its fork; the one-shot creation flag was being spent on a render that could not display it, losing the warning whenever a first snapshot failed; a trailing .catch was catching its own success handler, so a throw after a successful create reported failure and invited a second one; and the in-flight guard was per-button on a page that renders two, so both could post and orphan the first wheel's token. Also fixed: an unbounded module Map that grew once per share ID on every server render, and a clipboard fallback that restored the selection but not the focus.
+
+Three changes to the shipped result, all user-asked: an empty wheel draws as a single blank slice rather than a white disc that reads as a failed load; the title keeps the same box in both roles, which is what was moving the whole header on the preview toggle; and the wheel pages say 'option' rather than 'spot', matching WheelOption, the API and the landing page - the placeholders had been contradicting their own aria-labels since they were written.
 
 AC 3 was reworded, with the user's agreement, from 'confirms via toast' to 'confirms on the button itself': the code TASK-19 shipped was right, and toasts stay TASK-20's for the events with no control to land on.
 <!-- SECTION:FINAL_SUMMARY:END -->
