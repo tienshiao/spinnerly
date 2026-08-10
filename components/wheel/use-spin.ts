@@ -11,6 +11,8 @@ import {
 import type { WheelOption } from '@/lib/wheels/model'
 
 import { targetRotation } from './geometry'
+import { createWheelSounds, type SoundSink } from './sounds'
+import { SPIN_EASE_POINTS, tickSchedule } from './tick-schedule'
 
 /**
  * The spin, as a state machine. Everything time-dependent about the wheel lives
@@ -26,8 +28,16 @@ import { targetRotation } from './geometry'
 /** The CSS transition, matching the prototype. */
 export const SPIN_DURATION_MS = 4300
 
-/** The easing. A long, slowing coast that settles rather than stops. */
-export const SPIN_EASING = 'cubic-bezier(0.16, 0.85, 0.16, 1)'
+/**
+ * The easing. A long, slowing coast that settles rather than stops.
+ *
+ * Built from the tick schedule's control points rather than written out,
+ * because the clicks are computed on the same curve this string hands to CSS
+ * — as two literals, a retune of either left the other silently unchanged and
+ * the sound drifting off the picture. ./use-spin.test.ts pins the assembled
+ * string, so the numbers cannot move without a test saying so.
+ */
+export const SPIN_EASING = `cubic-bezier(${SPIN_EASE_POINTS.x1}, ${SPIN_EASE_POINTS.y1}, ${SPIN_EASE_POINTS.x2}, ${SPIN_EASE_POINTS.y2})`
 
 /**
  * When the result is announced — 100ms after the transition ends.
@@ -197,10 +207,14 @@ function randomIndex(count: number): number {
  *
  * @param live   Live options, straight from the session projection.
  * @param pick   Injected by tests; the seam phase 2's server draw replaces.
+ * @param sink   Where the sound goes. Injected by tests; a browser gets the
+ *               real one, built once per hook and holding no audio device until
+ *               something is actually played.
  */
 export function useSpin(
   live: WheelOption[],
   pick: PickIndex = randomIndex,
+  sink?: SoundSink,
 ): SpinState {
   const [frozen, setFrozen] = useState<WheelOption[] | null>(null)
   const [rotation, setRotation] = useState(0)
@@ -213,6 +227,22 @@ export function useSpin(
 
   const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  /** The current rotation, for `spin` to read. See the note where it is used. */
+  const rotationRef = useRef(0)
+
+  /**
+   * The sound, built once per hook.
+   *
+   * A `useState` initialiser rather than a module singleton, so two wheels on
+   * one page — the kitchen sink has several — cannot cancel each other's
+   * clicks. Building it allocates an object and nothing else: no `AudioContext`
+   * exists until something is played, which is what keeps a page nobody spins
+   * free of an audio device and free of the autoplay warning a context built
+   * outside a gesture logs.
+   */
+  const [ownSink] = useState<SoundSink>(() => sink ?? createWheelSounds())
+  const sounds = sink ?? ownSink
+
   /**
    * Clearing the settle timer on unmount is not tidiness.
    *
@@ -220,12 +250,19 @@ export function useSpin(
    * than it takes to close a wheel — and a callback that lands after the tree
    * has gone would set state on nothing and, in a test, leak into whichever
    * file the fake clock runs next.
+   *
+   * The sound is torn down beside it for a louder version of the same reason: a
+   * spin's clicks are handed to the audio thread all at once, four seconds
+   * ahead, so a page left mid-spin goes on ticking through the wheel that
+   * replaced it — or through no wheel at all — with nothing on screen to
+   * explain the noise or to stop it.
    */
   useEffect(() => {
     return () => {
       if (settleTimer.current !== null) clearTimeout(settleTimer.current)
+      sounds.dispose()
     }
-  }, [])
+  }, [sounds])
 
   const canSpin = !spinning && live.length >= MIN_OPTIONS
 
@@ -267,11 +304,50 @@ export function useSpin(
       ? 0
       : Math.min(Math.max(Math.trunc(drawn), 0), snapshot.length - 1)
 
+    /**
+     * Where the wheel is, from a REF rather than from the `rotation` state.
+     *
+     * This callback is not rebuilt when the rotation changes — it has no reason
+     * to be, since nothing else here reads it — so its closure holds whatever
+     * the rotation was when it was last built, and the second spin of a session
+     * would compute its target from the first spin's starting angle. The
+     * functional `setRotation(current => …)` this replaces solved that for the
+     * state and only for the state; the sound needs the same two numbers in a
+     * place where a side effect is allowed, which a state updater is not.
+     *
+     * Safe as a ref for the reason `live` is not: the rotation is this hook's
+     * own, monotonic, and written in exactly one place — right here.
+     */
+    const from = rotationRef.current
+    const to = targetRotation(from, index, snapshot.length)
+    rotationRef.current = to
+
     setFrozen(snapshot)
     setResult(null)
     setSpinning(true)
     setAnimated(!reducedMotion)
-    setRotation((current) => targetRotation(current, index, snapshot.length))
+    setRotation(to)
+
+    /**
+     * The clicks, handed over in one go — see ./sounds.ts on why they are given
+     * to the audio clock rather than to a timer.
+     *
+     * Silent under reduced motion, and that is AC 5 rather than caution: the
+     * wheel does not travel there, it jumps, so there is no boundary passing
+     * the pointer for a click to mark. Four seconds of ticking over a wheel
+     * that is already stopped would be a sound effect for an animation the user
+     * asked not to see. The win flourish is not motion and still plays.
+     */
+    if (!reducedMotion) {
+      sounds.spin(
+        tickSchedule({
+          from,
+          to,
+          count: snapshot.length,
+          durationMs: SPIN_DURATION_MS,
+        }),
+      )
+    }
 
     if (settleTimer.current !== null) clearTimeout(settleTimer.current)
     settleTimer.current = setTimeout(
@@ -316,10 +392,16 @@ export function useSpin(
           if (current.has(id)) return current
           return new Set(current).add(id)
         })
+
+        // With the result rather than with the last click, which is a beat
+        // earlier: the flourish belongs to the modal opening, not to the wheel
+        // stopping. Played whatever the motion preference, since a chord is not
+        // movement.
+        sounds.win()
       },
       reducedMotion ? REDUCED_MOTION_SETTLE_MS : SPIN_SETTLE_MS,
     )
-  }, [live, pick, reducedMotion, spinning])
+  }, [live, pick, reducedMotion, sounds, spinning])
 
   /**
    * Thaw. Guarded against running mid-spin, where it would undo the freeze that

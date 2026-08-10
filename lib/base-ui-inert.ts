@@ -16,7 +16,8 @@ import * as React from 'react'
  * skips focus guards. It has been open since June 2026, stalled on reviewer
  * concerns about `inert` side effects and failing Drawer tests. This mirrors
  * that fix from the outside using the marker Base UI already stamps, so when
- * #4714 lands this file and its one call site can be deleted outright.
+ * #4714 lands this file and its call sites — `useInertPopup` in both dialogs —
+ * can be deleted outright.
  *
  * Two details make this fiddlier than "mirror the marker onto inert":
  *
@@ -145,4 +146,43 @@ export function useInertBackground(
       })
     }
   }, [scope, enabled, restoreFocusTo])
+}
+
+/**
+ * The plumbing a dialog needs to drive `useInertBackground`, in one place.
+ *
+ * The popup's element has to be carried twice, and the pairing is the subtle
+ * part: a REF for Base UI's `initialFocus`, which wants one, and STATE so that
+ * the popup mounting — which happens when the dialog opens, long after the
+ * calling component mounts — actually re-runs the inert effect. A ref alone
+ * would still be null the one time the effect ran, and an inert effect that
+ * never fires fails silently: the page behind the dialog simply stays tabbable.
+ *
+ * Extracted because that pairing was copied line for line into both dialogs,
+ * where a future copy that forgets the state half would reintroduce exactly
+ * that silent failure. Deleted along with `useInertBackground` when the
+ * upstream fix lands.
+ *
+ * @param enabled the popup's modality AND its openness — pass what
+ * `useInertBackground` should see, e.g. `modal === true && open`.
+ * @param restoreFocusTo where focus goes back to when the dialog closes, as the
+ * fallback `useInertBackground` documents.
+ */
+export function useInertPopup(
+  enabled: boolean,
+  restoreFocusTo?: React.RefObject<HTMLElement | null>,
+): {
+  popupRef: React.RefObject<HTMLDivElement | null>
+  attachPopup: (node: HTMLDivElement | null) => void
+} {
+  const popupRef = React.useRef<HTMLDivElement>(null)
+  const [popupEl, setPopupEl] = React.useState<HTMLDivElement | null>(null)
+  const attachPopup = React.useCallback((node: HTMLDivElement | null) => {
+    popupRef.current = node
+    setPopupEl(node)
+  }, [])
+
+  useInertBackground(popupEl, enabled, restoreFocusTo)
+
+  return { popupRef, attachPopup }
 }

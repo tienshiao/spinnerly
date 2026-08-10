@@ -24,6 +24,10 @@ const buttonVariants = cva(
     'rounded-pill border border-transparent bg-clip-padding whitespace-nowrap select-none',
     'font-heading text-sm leading-[1.2] font-normal transition-all',
     'disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-45',
+    // The same look for `focusableWhenDisabled`, which renders `aria-disabled`
+    // INSTEAD of the native attribute — that is what keeps the button in the
+    // tab order — so the `disabled:` variants above never match it.
+    'aria-disabled:pointer-events-none aria-disabled:cursor-not-allowed aria-disabled:opacity-45',
     'aria-invalid:border-destructive',
     '[&_svg]:pointer-events-none [&_svg]:block [&_svg]:shrink-0',
     "[&_svg:not([class*='size-'])]:size-4",

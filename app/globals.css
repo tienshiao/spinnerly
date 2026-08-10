@@ -7,6 +7,7 @@
 @import 'shadcn/tailwind.css';
 @import './theme.css';
 @import './shadcn-tokens.css';
+@import './motion.css';
 
 /* Organic's base layer. Tailwind's preflight already handles the resets this
  * system's styles.css does by hand (box-sizing, margin zeroing, block images),

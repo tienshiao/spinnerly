@@ -1,0 +1,86 @@
+/* The payoff moment's two keyframes — the prototype's `wl-pop` and `wl-fall`.
+ *
+ * Here rather than in theme.css on purpose. That file is the Organic port, and
+ * Organic defines no animations; these live in the prototype page's own
+ * `<style>` block (docs/spin-the-wheel-editor/project/Wheel.dc.html), which is
+ * to say they belong to this application rather than to the design system.
+ * Keeping them apart means a future re-port of Organic has nothing of ours to
+ * step on.
+ *
+ * They are `--animate-*` tokens rather than bare `@keyframes` because the
+ * animation shorthand then arrives through a utility class, which is what lets
+ * the confetti override only `animation-duration` and `animation-delay` per
+ * piece from an inline style — an inline longhand beats a class's shorthand
+ * whatever the source order — while the name, easing and fill mode stay in one
+ * place.
+ */
+@theme static {
+  /* The card's entrance. Overshoots to 1.03 and settles.
+   *
+   * **`scale`, the property, not `scale()` inside `transform`.** The card is
+   * centred with `fixed top-1/2 left-1/2` and a translate utility, and in
+   * Tailwind v4 that utility writes the independent `translate` property rather
+   * than a `transform`. A keyframe reaching for `transform: translate(-50%,
+   * -50%) scale(...)` — the spelling every pre-v4 example uses — therefore does
+   * not REPLACE the centring, it ADDS to it: the card renders half its own
+   * width and height up and to the left of the middle of the screen, and stays
+   * there for as long as the animation's `both` fill holds the final frame.
+   * Measured in a browser at 460x214: off by exactly (-230, -107).
+   *
+   * Animating the independent property instead leaves `translate` untouched, so
+   * the centring is the utility's business alone and there is nothing to keep
+   * in step. */
+  --animate-winner-pop: winner-pop 320ms ease-out both;
+
+  @keyframes winner-pop {
+    0% {
+      scale: 0.85;
+      opacity: 0;
+    }
+    60% {
+      scale: 1.03;
+    }
+    100% {
+      scale: 1;
+      opacity: 1;
+    }
+  }
+
+  /* One piece of confetti, from above the viewport to below it.
+   *
+   * The drift and the spin are per-piece custom properties rather than a
+   * keyframe each, so seventy pieces share one animation. Both carry fallbacks:
+   * an unset property makes the whole `transform` invalid, which would leave the
+   * piece parked at its start position instead of falling.
+   *
+   * `translate3d` rather than `translate`, as the prototype has it — the z
+   * component is what asks for a compositor layer, and seventy elements
+   * animating `top` on the main thread is the version of this that drops
+   * frames.
+   *
+   * **The piece is already off the top of the screen before this runs, and that
+   * is the element's own position rather than this keyframe's job.** Pieces are
+   * staggered by up to 900ms, and an animation that has not started yet styles
+   * nothing: with the offset written into the 0% frame instead, seventy pieces
+   * sat in a visible row along the top edge of the page and then dropped out of
+   * it one by one. `both` as the fill mode fixes that case too — the first
+   * frame applies through the delay — but it fixes it by relying on a keyword
+   * whose absence is silent, where `-top-[10vh]` on the span is a fact about
+   * where the thing IS. The keyword is kept as well, so the two agree during
+   * the delay rather than only happening to. */
+  --animate-confetti-fall: confetti-fall 2s cubic-bezier(0.3, 0.6, 0.5, 1) both;
+
+  @keyframes confetti-fall {
+    0% {
+      transform: translate3d(0, 0, 0) rotate(0deg);
+      opacity: 1;
+    }
+    100% {
+      /* 120vh, not 110: the piece starts a tenth of a screen above the top, so
+         it needs that much extra travel to clear the bottom. */
+      transform: translate3d(var(--confetti-dx, 0px), 120vh, 0)
+        rotate(var(--confetti-rot, 720deg));
+      opacity: 0.9;
+    }
+  }
+}
