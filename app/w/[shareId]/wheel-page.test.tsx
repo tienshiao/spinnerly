@@ -608,11 +608,14 @@ describe('previewing as a viewer', () => {
         await vi.advanceTimersByTimeAsync(5000)
       })
 
-      // The whole point of refusing: this strip is editor-only, so it would
-      // have been rendered behind the preview and dismissed without being read.
+      // The whole point of refusing: the winner modal is editor-only, so it
+      // would have opened behind the preview and been dismissed unread.
       expect(screen.getByText(/landed on/i)).toBeTruthy()
 
-      // And the refusal lasts exactly as long as the spin.
+      // And the refusal lasts exactly as long as the spin. The modal has to be
+      // closed first — it is modal, so the header behind it is inert, which is
+      // itself the reason the guard cannot be reached this way any more.
+      await user.click(screen.getByRole('button', { name: /^nice$/i }))
       await user.click(
         screen.getByRole('button', { name: /preview as viewer/i }),
       )
@@ -1176,48 +1179,81 @@ describe('states with no wheel to draw', () => {
 })
 
 /**
- * The spin button ships here with the result strip TASK-20 replaces, and it
- * ships with it for a reason worth keeping a test on: `useSpin` freezes the
- * wheel on the snapshot it spun from spin start until `dismiss()` is called. A
- * button without one leaves the wheel showing a stale option list for the rest
- * of the session, which reads as a broken listener rather than a missed call.
+ * The spin, end to end: the button, the modal it opens four seconds later, and
+ * the thaw on the way out.
+ *
+ * The modal's own behaviour — the focus trap, Escape, the backdrop, the pop and
+ * the confetti — is ./winner-modal.test.tsx. What is here is only what needs the
+ * page to be true: that the modal is wired to `useSpin`. `useSpin` freezes the
+ * wheel on the snapshot it spun from spin start until `dismiss()` is called, and
+ * a modal closing on its own state would leave the wheel showing a stale option
+ * list for the rest of the session — which reads as a broken listener rather
+ * than a missed call, so it is worth a test rather than a comment.
  */
 describe('the spin', () => {
-  it('announces a result and thaws the wheel when it is dismissed', async () => {
+  /** Spin, and let the settle timer run out. */
+  async function spinAndSettle(
+    user: ReturnType<typeof userEvent.setup>,
+  ): Promise<void> {
+    await user.click(screen.getByRole('button', { name: /spin the wheel/i }))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+  }
+
+  it('opens the winner modal on the result, naming what it landed on', async () => {
     setHash(`#e=${TOKEN}`)
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
 
     try {
       await mount(fakeApi('editor'))
-      await user.click(screen.getByRole('button', { name: /spin the wheel/i }))
+      await spinAndSettle(user)
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(5000)
-      })
-
-      const result = screen.getByText(/landed on/i)
-      expect(result).toBeTruthy()
-
-      await user.click(screen.getByRole('button', { name: /^dismiss$/i }))
-
-      expect(screen.queryByText(/landed on/i)).toBeNull()
+      const modal = screen.getByRole('dialog')
+      expect(within(modal).getByText(/tacos|ramen/i)).toBeTruthy()
     } finally {
       vi.useRealTimers()
     }
   })
 
   /**
-   * Found by running the page: spin, then press "Preview as viewer". The result
-   * strip is editor-only, so previewing takes away the only control that calls
-   * `dismiss()` — and the wheel stays frozen on its spun snapshot for the rest
-   * of the session, with added options silently never appearing.
+   * AC 5. Announced from a live region the page has been carrying all along,
+   * rather than from the card — a region that arrives with its text already in
+   * it is not a change, and screen readers that follow the spec do not read it.
    *
-   * Asserted on the wheel's own label rather than on the strip, because the
-   * strip disappears either way. What has to be true is that the wheel is
-   * tracking live options again.
+   * Its wording is also what the two tests below and the preview suite assert
+   * on, since the card itself only ever prints the bare label.
    */
-  it('thaws the wheel when an editor previews with a result on screen', async () => {
+  it('announces the result to assistive tech', async () => {
+    setHash(`#e=${TOKEN}`)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    try {
+      const { container } = await mount(fakeApi('editor'))
+
+      const live = container.querySelector('[aria-live="polite"]')
+      expect(
+        live,
+        'the live region must exist before the result does',
+      ).toBeTruthy()
+      expect(live?.textContent).toBe('')
+
+      await spinAndSettle(user)
+
+      expect(live?.textContent).toMatch(/^Landed on (Tacos|Ramen)$/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * The thaw, asserted on the wheel's own label rather than on the modal: what
+   * has to be true is that the wheel is tracking live options again, and the
+   * modal disappears either way.
+   */
+  it('thaws the wheel when the modal is closed', async () => {
     setHash(`#e=${TOKEN}`)
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
@@ -1227,18 +1263,13 @@ describe('the spin', () => {
         { id: 'o1', label: 'Tacos' },
         { id: 'o2', label: 'Ramen' },
       ])
-      await user.click(screen.getByRole('button', { name: /spin the wheel/i }))
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(5000)
-      })
-      expect(screen.getByText(/landed on/i)).toBeTruthy()
+      await spinAndSettle(user)
 
-      await user.click(
-        screen.getByRole('button', { name: /preview as viewer/i }),
-      )
+      await user.click(screen.getByRole('button', { name: /^nice$/i }))
+      expect(screen.queryByRole('dialog')).toBeNull()
 
-      // A third option, added while the preview is open. A frozen wheel is
-      // still drawing the two-option snapshot and would never show it.
+      // A third option, added after the close. A wheel still frozen on its spun
+      // snapshot is drawing two and would never show it.
       deliver([
         { id: 'o1', label: 'Tacos' },
         { id: 'o2', label: 'Ramen' },
@@ -1250,6 +1281,111 @@ describe('the spin', () => {
           'Sushi',
         ),
       )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * "Spin again" closes and re-spins — and the beat between the two is the
+   * page's timer rather than the modal's, because closing unmounts the modal
+   * and its own cleanup would clear the timer on the way out. That is the
+   * failure this asserts against: a button that closes the card and then does
+   * nothing at all.
+   */
+  it('closes and spins again', async () => {
+    setHash(`#e=${TOKEN}`)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    try {
+      await mount(fakeApi('editor'))
+      await spinAndSettle(user)
+
+      await user.click(screen.getByRole('button', { name: /spin again/i }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+
+      // The second spin runs the same 4.4 seconds as the first and opens the
+      // card again. What this rules out is the modal owning the beat: a
+      // `setTimeout` inside the card is cleared by its own unmount, so the
+      // button would close the card and then quietly do nothing.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+      expect(screen.getByRole('dialog')).toBeTruthy()
+
+      /**
+       * The beat itself is not asserted. It is 120ms, which is shorter than a
+       * `userEvent` click takes in real time, and this file's fake clock runs
+       * with real time — so a case that pinned it would pass or fail on how
+       * busy the machine is. The delay is visual; the wiring above is what
+       * breaks silently.
+       */
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * The gap the beat opens, and the one place `togglePreview`'s guard cannot
+   * see. For those 120ms `spinning` is false, so nothing refuses a preview and
+   * nothing disables the control — and a spin starting behind the participant
+   * view has no modal and no live region to announce it, so the result lands
+   * four seconds later unseen and is cleared on the way back.
+   *
+   * The preview is clicked through the DOM rather than through `userEvent`,
+   * which is not a shortcut: a `userEvent` click takes longer in real time than
+   * the beat it is trying to land inside.
+   */
+  it('drops a queued re-spin when the editor previews inside the beat', async () => {
+    setHash(`#e=${TOKEN}`)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    try {
+      await mount(fakeApi('editor'))
+      await spinAndSettle(user)
+
+      // Two acts, not one: the header is behind a modal that is inert until
+      // React has flushed the close, so the control cannot even be found until
+      // the first has settled. Both together take far less than the 120ms beat.
+      act(() => {
+        screen.getByRole('button', { name: /spin again/i }).click()
+      })
+      act(() => {
+        screen.getByRole('button', { name: /preview as viewer/i }).click()
+      })
+
+      expect(
+        screen.getByText('Viewer'),
+        'the preview must have opened',
+      ).toBeTruthy()
+
+      // Past the beat, which is when a re-spin that survived would have begun.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500)
+      })
+
+      /**
+       * Asserted by trying to LEAVE the preview, because a spin running behind
+       * it is invisible from the participant view — no modal, no live region,
+       * no button that says "Spinning…". What a running spin does do is refuse
+       * this toggle, which is the same guard from the other side. So a page
+       * that comes back to the editor is a page where nothing started.
+       */
+      await user.click(screen.getByRole('button', { name: /back to editing/i }))
+
+      expect(
+        screen.getByText('Editor'),
+        'a re-spin survived the preview and is holding the toggle',
+      ).toBeTruthy()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6000)
+      })
+
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.queryByText(/landed on/i)).toBeNull()
     } finally {
       vi.useRealTimers()
     }

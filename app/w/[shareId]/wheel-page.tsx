@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Wheel } from '@/components/wheel/wheel'
@@ -17,6 +17,7 @@ import { useWheelSession } from '@/lib/wheels/use-wheel-session'
 import { OptionsPanel } from './options-panel'
 import { SuggestionsPanel } from './suggestions-panel'
 import { WheelHeader } from './wheel-header'
+import { SPIN_AGAIN_DELAY_MS, WinnerModal } from './winner-modal'
 
 /**
  * The wheel page, for both roles. Design doc section 2.
@@ -142,6 +143,46 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
   const options = session.view.wheel?.options ?? []
   const spin = useSpin(options)
 
+  /**
+   * The spin button, so the winner modal has somewhere to put focus back. AC 4
+   * asks for the control that opened the modal, and there is no trigger element
+   * to infer it from — the modal opens from a timer, four seconds after the
+   * click that started the spin.
+   */
+  const spinButtonRef = useRef<HTMLButtonElement>(null)
+
+  /**
+   * "Spin again": close, wait a beat, spin.
+   *
+   * The timer lives here rather than in the modal because closing unmounts the
+   * modal, and an effect cleanup there would clear the timer on the way out —
+   * see the note on `SPIN_AGAIN_DELAY_MS`. This component stays mounted across
+   * the close, so it is the one that can hold it.
+   *
+   * `spin()` re-freezes from live options, so it does not matter that
+   * `dismiss()` has already thawed the wheel in between.
+   */
+  const respinTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Cleared on unmount for the same reason `useSpin` clears its settle timer:
+  // it is trivial to leave this page inside 120ms, and a callback landing after
+  // the tree has gone would spin a wheel nobody is looking at.
+  useEffect(() => {
+    return () => {
+      if (respinTimer.current !== null) clearTimeout(respinTimer.current)
+    }
+  }, [])
+
+  const spinAgain = useCallback(() => {
+    spin.dismiss()
+
+    if (respinTimer.current !== null) clearTimeout(respinTimer.current)
+    respinTimer.current = setTimeout(() => {
+      respinTimer.current = null
+      spin.spin()
+    }, SPIN_AGAIN_DELAY_MS)
+  }, [spin])
+
   const onError = useCallback((message: string) => {
     setFailure(message)
   }, [])
@@ -171,6 +212,28 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
    */
   const togglePreview = useCallback(() => {
     if (spin.spinning) return
+
+    /**
+     * **A re-spin that has been asked for but not started yet is dropped, not
+     * left to fire behind the preview.**
+     *
+     * "Spin again" closes the card and starts the wheel 120ms later, and for
+     * those 120ms `spin.spinning` is false — so the guard above does not refuse
+     * and the header's control is not disabled. Previewing in that gap would
+     * start a spin under the participant view, where both the winner modal and
+     * the live region are editor-only: the result lands four seconds later with
+     * nothing to show it, and is then cleared unseen on the way back. Which is
+     * the exact failure the guard above exists to prevent, arrived at through
+     * the one window where it does not look.
+     *
+     * Dropped rather than refused, because the preview is the newer of the two
+     * intentions — and a control that ignores a click for a tenth of a second
+     * after an unrelated one is worse than a re-spin that did not happen.
+     */
+    if (respinTimer.current !== null) {
+      clearTimeout(respinTimer.current)
+      respinTimer.current = null
+    }
 
     spin.dismiss()
     setPreviewing((current) => !current)
@@ -386,6 +449,7 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
           {role === 'editor' ? (
             <>
               <Button
+                ref={spinButtonRef}
                 size="lg"
                 onClick={spin.spin}
                 disabled={!spin.canSpin}
@@ -395,30 +459,58 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
               </Button>
 
               {/*
-                TASK-20 replaces this with the winner modal and the confetti.
-                It is here rather than left to that task because `dismiss()` is
-                not optional: the wheel holds its frozen snapshot from spin
-                start until something calls it, so a spin button shipped without
-                one leaves the wheel showing a stale option list for the rest of
-                the session — added options stop appearing, and it reads as a
-                broken listener rather than a missing call.
+                AC 5, and it is a live region rather than the modal's own
+                announcement for two reasons. A `role="status"` only announces
+                CHANGES to a region that was already there, so one shipped
+                inside the card — which arrives with its text already in it —
+                would be silent on the browser and screen reader pairs that read
+                the spec strictly. And the modal is suppressed by nothing, but
+                its *entrance* is: under reduced motion the card appears with no
+                animation at all, and this is what guarantees the result is
+                spoken either way.
+
+                The wording matches the modal rather than repeating its whole
+                contents, so the two do not read as different events.
+
+                `aria-live` and `aria-atomic` rather than `role="status"`, which
+                is exactly what that role expands to. The notice strip above is
+                the page's one element with the status ROLE, and leaving it that
+                way keeps "the page is telling you something" and "the wheel
+                landed on this" distinguishable — to a screen reader user moving
+                by role, and to anyone querying for either.
               */}
-              {spin.result !== null && (
-                <div
-                  role="status"
-                  className="border-accent-2-300 bg-accent-2-100 flex w-full max-w-[480px] items-center justify-between gap-3 rounded-[var(--radius-md)] border px-4 py-3"
-                >
-                  <span className="text-[15px]">
-                    Landed on{' '}
-                    <strong className="font-heading">
-                      {spin.result.option.label}
-                    </strong>
-                  </span>
-                  <Button variant="secondary" size="sm" onClick={spin.dismiss}>
-                    Dismiss
-                  </Button>
-                </div>
-              )}
+              <p aria-live="polite" aria-atomic className="sr-only">
+                {spin.result === null
+                  ? ''
+                  : `Landed on ${spin.result.option.label}`}
+              </p>
+
+              {/*
+                `onClose` is `dismiss`, and that is not a detail: the wheel
+                holds its frozen snapshot from spin start until something calls
+                it, so a modal that closed on its own state would leave the
+                wheel showing a stale option list for the rest of the session —
+                added options stop appearing, and it reads as a broken listener
+                rather than a missing call.
+
+                Rendered unconditionally with `open` doing the work, rather
+                than behind `spin.result !== null`. Base UI restores focus when
+                its dialog CLOSES; a tree yanked out from under it never gets
+                that far, and AC 4's return to the spin button would be left to
+                the inert workaround's fallback alone.
+
+                The empty `label` on the closed pass is not a hole in that: the
+                modal holds the last one it was given for exactly this, because
+                "the card leaves in the same commit" is very nearly true and not
+                quite — see the note on `lastLabel`.
+              */}
+              <WinnerModal
+                open={spin.result !== null}
+                label={spin.result?.option.label ?? ''}
+                onClose={spin.dismiss}
+                onSpinAgain={spinAgain}
+                returnFocusTo={spinButtonRef}
+              />
             </>
           ) : (
             /*
