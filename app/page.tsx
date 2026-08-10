@@ -1,6 +1,4 @@
 import { Badge } from '@/components/ui/badge'
-import { buttonVariants } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
 import { conicFromPalette, sliceColors } from './wheel-palette'
 import { CreateWheelButton, CreateWheelProvider } from './create-wheel-button'
 import './landing.css'
@@ -8,28 +6,27 @@ import './landing.css'
 /**
  * The landing page, ported from docs/spin-the-wheel-editor/project/Home.dc.html.
  *
- * A server component still, with one client boundary in it. The two "Make a
- * wheel" buttons are `CreateWheelButton` — they post to the create endpoint and
- * navigate into the new wheel's edit URL, which is the whole of the create flow
- * (TASK-21). Both sit under one `CreateWheelProvider`, which is what makes
- * "only one wheel is being made" a fact about the page rather than about
- * whichever button was pressed.
+ * A server component still, with one client boundary in it. Every call to
+ * action on the page is now a `CreateWheelButton` — header, hero and closing
+ * band — and each posts to the create endpoint and navigates into the new
+ * wheel's edit URL, which is the whole of the create flow (TASK-21).
  *
- * The other two call-to-action buttons stay deliberately inert `<button>`
- * elements, and stay styled with `buttonVariants()` rather than the `Button`
- * component: Base UI's Button carries a 'use client' directive, and opening a
- * client boundary for a control that does nothing would ship JavaScript for no
- * behaviour. Both belong to TASK-22, which owns the one question neither this
- * task nor that styling can answer — where "See a live one" goes, given a demo
- * wheel needs an owner, a mutation policy and something to reset it.
+ * All three sit under one `CreateWheelProvider`, which is what makes "only one
+ * wheel is being made" a fact about the page rather than about whichever button
+ * was pressed. That is why the provider wraps the header as well as the main
+ * content: a header button outside it would hold its own claim and could post
+ * while the hero's request was still out, which is precisely the double-create
+ * the shared claim exists to refuse. Adding a fourth button elsewhere on the
+ * page means putting it inside this provider, not beside it.
  *
- * Every such call is wrapped in `cn()`. `buttonVariants()` alone returns raw cva
- * output, which concatenates rather than merges: an override and the variant
- * default both survive into the class list and the winner is decided by
- * stylesheet order, not by call site. That silently rendered the band's button
- * white-on-white — `bg-white` won, `text-accent-700` lost to
- * `text-primary-foreground`. `cn()` runs tailwind-merge, which drops the
- * superseded class outright.
+ * The page offers no way to open an EXISTING wheel, and that is not an
+ * oversight. A wheel is reachable only by its link (design doc section 2) —
+ * there are no accounts, so there is no list to show and nothing to look a
+ * wheel up by. The header slot that read "Open a wheel" promised exactly that
+ * and could not deliver it, so it makes a wheel instead. "See a live one" is
+ * gone for the neighbouring reason: a public demo wheel is real scope — an
+ * owner, a mutation policy, something to reset it — and a landing page is not
+ * the place to acquire it. See TASK-22.
  *
  * The prototype is a fixed-width desktop mockup with no media queries; its hero
  * grid alone has a 680px floor. The responsive behaviour here is therefore new
@@ -143,31 +140,29 @@ export default function Home() {
       </div>
 
       <div className={CONTENT}>
-        <header
-          className={`relative flex flex-wrap items-center justify-between gap-5 py-[22px] ${GUTTER}`}
-        >
-          <div className="flex items-center gap-3">
-            <div
-              className="rounded-pill size-[38px] shadow-[inset_0_0_0_5px_#fff]"
-              style={{ background: conicFromPalette(BRAND_MARK_SLICES) }}
-              aria-hidden="true"
-            />
-            <span className="font-heading text-[22px]">Spinnerly</span>
-          </div>
-          <nav className="flex items-center gap-6.5 text-[15px]">
-            <a href="#how">How it works</a>
-            <a href="#uses">Ideas</a>
-            <button type="button" className={cn(buttonVariants())}>
-              Open a wheel
-            </button>
-          </nav>
-        </header>
-
-        {/* Both "Make a wheel" buttons under one provider, so the second cannot
+        {/* Every "Make a wheel" button under one provider, so no second one can
             post while the first's request is out — see create-wheel-button.tsx.
             Everything inside stays a server component: `children` is passed
             through, not rendered by the client boundary. */}
         <CreateWheelProvider>
+          <header
+            className={`relative flex flex-wrap items-center justify-between gap-5 py-[22px] ${GUTTER}`}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="rounded-pill size-[38px] shadow-[inset_0_0_0_5px_#fff]"
+                style={{ background: conicFromPalette(BRAND_MARK_SLICES) }}
+                aria-hidden="true"
+              />
+              <span className="font-heading text-[22px]">Spinnerly</span>
+            </div>
+            <nav className="flex items-center gap-6.5 text-[15px]">
+              <a href="#how">How it works</a>
+              <a href="#uses">Ideas</a>
+              <CreateWheelButton>Make a wheel</CreateWheelButton>
+            </nav>
+          </header>
+
           <main className="relative">
             <section
               className={`grid items-center gap-14 pt-15 pb-[90px] lg:grid-cols-[minmax(360px,1.05fr)_minmax(320px,0.95fr)] ${GUTTER}`}
@@ -186,19 +181,13 @@ export default function Home() {
                   watch it land. Everyone can suggest — you decide what makes
                   the cut.
                 </p>
+                {/* One button, but still a wrapping row: it carries the pt-1
+                    that separates the calls to action from the copy above, and
+                    keeps the gap ready for a second one. */}
                 <div className="flex flex-wrap gap-3 pt-1">
                   <CreateWheelButton className="px-9 py-[15px] text-lg shadow-md">
                     Make a wheel
                   </CreateWheelButton>
-                  <button
-                    type="button"
-                    className={cn(
-                      buttonVariants({ variant: 'secondary' }),
-                      'px-8 py-[15px] text-lg',
-                    )}
-                  >
-                    See a live one
-                  </button>
                 </div>
                 <div className="flex items-center gap-2.5 text-sm text-neutral-700">
                   <span className="inline-flex" aria-hidden="true">
