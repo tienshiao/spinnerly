@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-11 00:58'
-updated_date: '2026-08-11 01:08'
+updated_date: '2026-08-11 01:38'
 labels: []
 dependencies: []
 documentation:
@@ -72,7 +72,29 @@ The sounds test needed two attempts and the first one was worthless. It asserted
 The `optionPills` contradiction resolved against CLAUDE.md rather than against the code: the card renders overflow as '+N more', so an always-on overflow would have to read '+0 more'. The code, its doc block and its test all agreed already; the doc sentence was the only outlier.
 
 Verified: npm test 1071 passing across 35 files, npm run test:emulator 322 passing across 14 (run against the already-running emulator, since the port was taken), typecheck, lint, format:check all clean. Both OG cards and the favicon re-rendered after the disc.tsx change and inspected — the mark still draws its four quarters with no seam.
+
+CORRECTION, after the change was already merged and deployed.
+
+The headline finding was wrong. The claim that the per-wheel OG route returns 'public, immutable, no-transform, max-age=31536000' in production does not hold: Next's metadata route layer replaces the header @vercel/og writes, so that value never reaches a client. A production build of a46ba63 — the code as it stood before any of this — answers 'public, max-age=0, must-revalidate'. Nothing was being pinned for a year, and a failed read was already revalidating on every fetch.
+
+The reasoning error is worth recording because it looked like verification. The dev server answers 'no-cache, no-store', and that string is BOTH @vercel/og's development value and Next's own CACHE_HEADERS.NO_CACHE. Reading it as proof that @vercel/og's header survived to the client was a coincidence of two identical literals, not evidence. The check that would have settled it — build in production mode and look at the header — is exactly the one that was skipped, and it takes about ninety seconds.
+
+What that means for the change: the ten-minute TTL was a real behaviour change introduced on a false premise, and on this product it pointed the wrong way — a cached card cannot be corrected, so the bias belongs on revalidating rather than on saving a Firestore read. CARD_CACHE now restates Next's own 'public, max-age=0, must-revalidate' verbatim. It has to be stated rather than omitted, since constructing the response by hand means nothing sets a Cache-Control for us. Measured in a production build against the emulator: a wheel that reads and a wheel that is gone both return that value; only a failed read returns 'no-store'.
+
+The rest of the task stands and never depended on the header. Rendering to bytes before constructing the response is what stops a satori throw truncating the PNG — the render runs inside the body stream, so a failure there cannot fall back — and that was verified directly, including the emoji fetch to cdn.jsdelivr.net. The optionPills, WheelMark, sounds and disc.tsx fixes are unaffected.
+
+Fixed in 7c29b82. Re-verified: npm test 1071 passing, typecheck, lint, format:check clean.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: @claude
+created: 2026-08-11 01:38
+---
+The unfurl finding that opened this task was wrong; see the correction note and 7c29b82. The task's other six findings were real and are unaffected.
+---
+<!-- COMMENTS:END -->
 
 ## Final Summary
 
