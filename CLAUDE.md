@@ -214,12 +214,20 @@ correct a card once it is out.
 
 The card names the options anyway (§11 Q1 answered the other way round from its
 own leaning, at the user's call). What staleness rules out is not the list but
-any phrasing that claims to be current or complete: `optionPills` reports an
-overflow **even when it is showing every option**, so four pills always read as a
-sample rather than as the wheel; `optionCountLine` describes rather than
-promises; and `og:description` deliberately stays a count, since it is quoted
-verbatim into a chat message where a stale list of specific things reads worse
-than a stale number.
+any phrasing that claims to be current or complete: `optionCountLine` describes
+rather than promises; and `og:description` deliberately stays a count, since it
+is quoted verbatim into a chat message where a stale list of specific things
+reads worse than a stale number.
+
+**A card may go stale; it may never contradict itself.** Those are different
+failures and only the second is a bug. `optionPills` counts its overflow off the
+wheel's own `optionCount` rather than off the labels it was handed — so pills
+plus "+N more" always equals the number in the line underneath, whatever the
+filter dropped and whatever a future reader chooses to truncate. Overflow is
+genuinely `0` when the card is showing every option, and that is right rather
+than a gap: the list really was complete when the image was made, the count line
+says the same number, and "+0 more" is not a thing the card could render. What
+would be wrong is a fifth option going unmentioned.
 
 Five things that bite:
 

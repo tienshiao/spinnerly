@@ -226,6 +226,106 @@ describe('building the context', () => {
     expect(fake.started).toHaveLength(SCHEDULE.times.length + 1)
   })
 
+  /**
+   * The recovery path has to leave what `dispose` leaves.
+   *
+   * `resume()` is called OUTSIDE the "build it" branch, so a throw from it —
+   * which iOS Safari produces on a context the OS has interrupted — lands in
+   * the recovery on a call where the context already existed. The recovery used
+   * to clear `context` and `master` and stop there, which is not the clean
+   * slate its own comment claims:
+   *
+   *  - `stopListening` kept the FIRST build's unsubscribe, and the rebuild
+   *    overwrote it. The first `sound-preference` subscription, and the window
+   *    `storage` handler under it, were then unreachable by `dispose` — a
+   *    listener outliving the page that made it.
+   *  - `noise` kept an `AudioBuffer` minted by the context that was just
+   *    closed, and the rebuild played it through the replacement. `dispose`
+   *    clears it for exactly that reason; the two paths disagreed.
+   *
+   * Both halves are asserted, because each fails on its own. The listener is
+   * counted at the window rather than inside the preference module: what makes
+   * it a leak is the handler that survives, and that is the thing to name.
+   */
+  it('leaves nothing behind when a rebuild follows a failed resume', () => {
+    const first = fakeContext()
+    const second = fakeContext()
+    const contexts = [first, second]
+
+    let storageHandlers = 0
+    const add = globalThis.addEventListener.bind(globalThis)
+    const remove = globalThis.removeEventListener.bind(globalThis)
+    const addSpy = vi
+      .spyOn(globalThis, 'addEventListener')
+      .mockImplementation((type, ...rest) => {
+        if (type === 'storage') storageHandlers += 1
+        return add(type, ...(rest as [never, never]))
+      })
+    const removeSpy = vi
+      .spyOn(globalThis, 'removeEventListener')
+      .mockImplementation((type, ...rest) => {
+        if (type === 'storage') storageHandlers -= 1
+        return remove(type, ...(rest as [never, never]))
+      })
+
+    try {
+      const sink = createWheelSounds(
+        () => contexts.shift()!.context as unknown as AudioContext,
+      )
+
+      /**
+       * A spin that WORKS first, and the order is the whole test.
+       *
+       * `resume()` only throws on a context the OS has already interrupted,
+       * which is to say one that has been used — and it is this first spin that
+       * populates `noise` and takes out the subscription. Making the very first
+       * `ensure()` fail, as an earlier version of this did, leaves both fields
+       * null and the assertions below true whether or not the recovery clears
+       * them.
+       */
+      sink.spin(SCHEDULE)
+      expect(first.started.length).toBeGreaterThan(0)
+      expect(first.context.createBuffer).toHaveBeenCalled()
+
+      // Now interrupted, the way a backgrounded tab comes back on iOS. This
+      // lands in the recovery from OUTSIDE the build branch.
+      first.context.state = 'suspended'
+      first.context.resume = vi.fn(() => {
+        throw new DOMException('interrupted', 'InvalidStateError')
+      })
+
+      const before = first.started.length
+      sink.spin(SCHEDULE)
+      expect(
+        first.started.length,
+        'the interrupted attempt makes no sound',
+      ).toBe(before)
+      expect(
+        first.context.close,
+        'the abandoned context is closed by the recovery',
+      ).toHaveBeenCalledTimes(1)
+
+      // Rebuilds against the second context.
+      sink.spin(SCHEDULE)
+      expect(second.started.length).toBeGreaterThan(0)
+      expect(
+        second.context.createBuffer,
+        'the new context mints its own noise rather than replaying a buffer ' +
+          'made by the one that was closed',
+      ).toHaveBeenCalled()
+
+      sink.dispose()
+
+      expect(
+        storageHandlers,
+        'every storage listener this sink added is gone with it',
+      ).toBe(0)
+    } finally {
+      addSpy.mockRestore()
+      removeSpy.mockRestore()
+    }
+  })
+
   /** A browser with no Web Audio API at all — which is every test environment. */
   it('is the silent sink where there is no AudioContext', () => {
     expect(createWheelSounds()).toBe(SILENT_SINK)
