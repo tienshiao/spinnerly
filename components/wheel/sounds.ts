@@ -370,10 +370,27 @@ export function createWheelSounds(createContext?: ContextFactory): SoundSink {
        * that failed the same way would mint another, until the cap makes even
        * the retry path fail for good. Closing is exactly the recovery the cap
        * error asks for.
+       *
+       * **The same four fields `dispose` clears, for the same reasons.** This
+       * used to clear only the two above, which is not the clean slate the
+       * paragraph above claims. `resume()` is called outside the `if` — so a
+       * synchronous throw from it lands here on a call where the context was
+       * already built, leaving `stopListening` holding the FIRST build's
+       * unsubscribe. The next `ensure()` takes the `context === null` branch
+       * and overwrites it, orphaning a `sound-preference` subscription and its
+       * window `storage` handler where `dispose` can no longer reach them: a
+       * listener outliving the page that made it. `noise` is the same shape of
+       * bug with a louder symptom — an `AudioBuffer` belongs to the context
+       * that created it, so the cached one would be played through the
+       * replacement context, which is precisely why `dispose` clears it.
        */
+      stopListening?.()
+      stopListening = null
+
       void context?.close().catch(() => {})
       context = null
       master = null
+      noise = null
       return null
     }
 

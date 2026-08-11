@@ -93,7 +93,7 @@ describe('optionPills', () => {
     Array.from({ length: count }, (_, i) => `Option ${i + 1}`)
 
   it('names the options in the wheel’s own order', () => {
-    const { pills } = optionPills(labels(3))
+    const { pills } = optionPills(labels(3), 3)
     expect(pills.map((pill) => pill.label)).toEqual([
       'Option 1',
       'Option 2',
@@ -104,25 +104,28 @@ describe('optionPills', () => {
   it('colours each pill by its slice', () => {
     // The dot is the wedge's colour, so the index has to be the option's
     // position rather than the pill's.
-    const { pills } = optionPills(labels(3))
+    const { pills } = optionPills(labels(3), 3)
     expect(pills.map((pill) => pill.palette)).toEqual([0, 1, 2])
   })
 
   it('shows no more than PILLS_MAX and counts the rest', () => {
-    const { pills, overflow } = optionPills(labels(PILLS_MAX + 6))
+    const { pills, overflow } = optionPills(
+      labels(PILLS_MAX + 6),
+      PILLS_MAX + 6,
+    )
     expect(pills).toHaveLength(PILLS_MAX)
     expect(overflow).toBe(6)
   })
 
   it('reports nothing left over when it has shown everything', () => {
-    expect(optionPills(labels(PILLS_MAX)).overflow).toBe(0)
-    expect(optionPills([]).pills).toEqual([])
+    expect(optionPills(labels(PILLS_MAX), PILLS_MAX).overflow).toBe(0)
+    expect(optionPills([], 0).pills).toEqual([])
   })
 
   it('cuts a long label rather than letting it take the row', () => {
     // OPTION_LABEL_MAX is 60, which at the card's 22px is a row on its own and
     // pushes the count line off the card.
-    const { pills } = optionPills(['x'.repeat(OPTION_LABEL_MAX)])
+    const { pills } = optionPills(['x'.repeat(OPTION_LABEL_MAX)], 1)
     expect(Array.from(pills[0].label)).toHaveLength(PILL_LABEL_MAX)
     expect(pills[0].label.endsWith('…')).toBe(true)
   })
@@ -130,7 +133,7 @@ describe('optionPills', () => {
   it('never cuts an astral character in half', () => {
     // A lone surrogate renders as a replacement box, on a card that cannot be
     // re-fetched. Same argument as components/wheel/geometry.ts.
-    const { pills } = optionPills(['🎉'.repeat(PILL_LABEL_MAX + 4)])
+    const { pills } = optionPills(['🎉'.repeat(PILL_LABEL_MAX + 4)], 1)
 
     // `Array.from` splits by code point, so a surviving half of a pair shows up
     // as a single unit in the surrogate range while a whole emoji is one unit
@@ -144,8 +147,55 @@ describe('optionPills', () => {
 
   it('drops a label that would render as a blank pill', () => {
     // No write path can produce one, but this reads a stored document.
-    const { pills } = optionPills(['Tacos', '', '   ', 'Ramen'])
+    const { pills, overflow } = optionPills(['Tacos', '', '   ', 'Ramen'], 4)
     expect(pills.map((pill) => pill.label)).toEqual(['Tacos', 'Ramen'])
+    // And the two it dropped are still counted, because the count line beside
+    // the pills is drawn from the wheel's own total and would otherwise be
+    // describing a different wheel. See the case below.
+    expect(overflow).toBe(2)
+  })
+
+  /**
+   * The card must not contradict its own caption.
+   *
+   * `overflow` used to be counted off the filtered list while
+   * `optionCountLine` was fed `preview.optionCount`, which `readWheelPreview`
+   * takes from the unfiltered array — `labelOf` coerces a bad label to `''`
+   * rather than dropping it, so that a broken option cannot shift every
+   * palette position after it. Six options with two label-less therefore drew
+   * four pills, no "+N more", and "6 options on the wheel" underneath: a card
+   * disagreeing with itself, cached that way for good.
+   */
+  it('counts what the wheel has, not what survived the filter', () => {
+    const stored = ['Tacos', '', 'Ramen', '', 'Sushi', 'Pizza']
+    const { pills, overflow } = optionPills(stored, stored.length)
+
+    expect(pills).toHaveLength(PILLS_MAX)
+    expect(overflow, 'four shown out of six leaves two').toBe(2)
+    // Stated the way the card states it, since that is the pairing that broke.
+    expect(pills.length + overflow).toBe(6)
+    expect(optionCountLine(stored.length)).toBe('6 options on the wheel')
+  })
+
+  /**
+   * `total` is the wheel's, and `options` may be a sample of it — `WheelPreview`
+   * says so and forbids assuming otherwise. Nothing truncates it today, which
+   * is exactly why this is pinned: a reader that later hands over the first
+   * few labels must not silently turn "+46 more" into "+0 more".
+   */
+  it('counts options it was never given labels for', () => {
+    const { pills, overflow } = optionPills(labels(PILLS_MAX), 50)
+
+    expect(pills).toHaveLength(PILLS_MAX)
+    expect(overflow).toBe(46)
+  })
+
+  it('never reports a negative overflow for a nonsense count', () => {
+    // `total` comes from a stored document, so it gets the same treatment
+    // every other count on the card gets.
+    for (const total of [-5, Number.NaN, 0]) {
+      expect(optionPills(labels(3), total).overflow).toBe(0)
+    }
   })
 })
 

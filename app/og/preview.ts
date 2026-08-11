@@ -147,7 +147,10 @@ export type OptionPills = {
  *    the whole wheel. `overflow` is 0 at exactly `PILLS_MAX` and that is right
  *    rather than a gap — the list really was complete when the image was made,
  *    and the count line beside it already says the same number. What would be
- *    wrong is a fifth option going unmentioned.
+ *    wrong is a fifth option going unmentioned. Note this is the one claim on
+ *    the card that a later edit can falsify, which is why it counts against the
+ *    wheel rather than against what survived the filter below; the card cannot
+ *    promise to be current, but it must not disagree with itself.
  *  - **The order is the wheel's order**, and `palette` is the option's position
  *    rather than the pill's, so a pill's dot is its own wedge's colour. That is
  *    also why nothing is sorted or filtered here: a card whose pills did not
@@ -156,18 +159,38 @@ export type OptionPills = {
  * Non-string and empty labels are dropped rather than rendered as blank pills.
  * No write path can produce one — `validateOptionLabel` refuses both — but this
  * reads a stored document, and an empty pill on a cached card cannot be fixed.
+ *
+ * @param options The labels, in wheel order.
+ * @param total   How many options the WHEEL has, which is not always
+ *   `options.length`. Required rather than derived, for two reasons that both
+ *   end in a card disagreeing with itself. `WheelPreview` documents `options`
+ *   as a sample the card may not assume is complete. And the overflow used to
+ *   be counted off the FILTERED list while the count line beside it was fed
+ *   `preview.optionCount`, which comes from the unfiltered array — so a
+ *   document with six options, two of them label-less, drew four pills, no
+ *   "+N more", and "6 options on the wheel" underneath. That is reachable only
+ *   from a hand-edited document, which is exactly what `labelOf` and the filter
+ *   below exist for.
  */
-export function optionPills(options: readonly string[]): OptionPills {
+export function optionPills(
+  options: readonly string[],
+  total: number,
+): OptionPills {
   const usable = options
     .map((label, index) => ({ label, index }))
     .filter(({ label }) => typeof label === 'string' && label.trim() !== '')
 
+  const pills = usable.slice(0, PILLS_MAX).map(({ label, index }) => ({
+    label: shorten(label.trim(), PILL_LABEL_MAX),
+    palette: index,
+  }))
+
   return {
-    pills: usable.slice(0, PILLS_MAX).map(({ label, index }) => ({
-      label: shorten(label.trim(), PILL_LABEL_MAX),
-      palette: index,
-    })),
-    overflow: Math.max(0, usable.length - PILLS_MAX),
+    pills,
+    // Against the pills actually drawn rather than against `PILLS_MAX`, so a
+    // wheel whose unusable labels left it with three pills counts the fourth
+    // option among the ones it did not show.
+    overflow: Math.max(0, safeCount(total) - pills.length),
   }
 }
 

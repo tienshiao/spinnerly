@@ -139,10 +139,13 @@ export function WheelDisc({
       aria-label={label}
     >
       <g transform={tilt ? `rotate(${tilt} ${CENTER} ${CENTER})` : undefined}>
-        {/* Behind the wedges, so their white stroke has something to sit on
-          rather than half-fading into the page. A stroke straddles its path, so
-          without this the rim would be a half-width of white over whatever is
-          behind the SVG. */}
+        {/* The disc the wedges are laid on, very slightly wider than they are.
+          Not a leftover from the white wedge stroke that used to sit on it —
+          see below, that is gone — but the ground that keeps the rim solid: a
+          wedge boundary is antialiased against whatever is behind the SVG, and
+          without an opaque disc under them the outer edge samples the page and
+          reads as a ragged, faintly translucent rim rather than a cut circle.
+          It also gives the drop shadow something to be cast by. */}
         <circle cx={CENTER} cy={CENTER} r={BACKDROP_RADIUS} fill={fill} />
 
         {slices.map((slice, index) => {
@@ -168,8 +171,12 @@ export function WheelDisc({
           )
         })}
 
-        {/* Over the wedge points, which would otherwise converge into a muddy
-          spike of overlapping white strokes at the centre. */}
+        {/* Over the wedge points, which converge on the exact centre. Fifty
+          antialiased edges meeting at one coordinate is a muddy grey spike
+          whatever colour the wedges are — the white strokes this used to blame
+          are long gone and the spike is not. The hub covers the whole
+          convergence, which is why its radius is a proportion rather than a
+          decoration. */}
         <circle
           cx={CENTER}
           cy={CENTER}
@@ -202,6 +209,15 @@ export function WheelDisc({
  * The ring is the prototype's `inset 0 0 0 5px` at 38px. A circle stroked inset
  * by half its own width lands in the same place, and unlike a box-shadow it is
  * a thing Satori can draw.
+ *
+ * **`aria-hidden` here rather than at the call sites**, because every one of
+ * them is decorative and none of them could reasonably not be: the two headers
+ * pair the mark with the word "Spinnerly" right beside it — one of them inside
+ * a link that already carries `aria-label="Spinnerly home"` — and the other two
+ * are rendered by Satori into a PNG where the attribute means nothing either
+ * way. Left off, both headers expose an unnamed graphic immediately before the
+ * text that names the brand. Unlike `WheelDisc` there is no labelled variant to
+ * make room for: a brand mark is never the content.
  */
 export function WheelMark({
   size,
@@ -220,6 +236,7 @@ export function WheelMark({
       width={size}
       height={size}
       className={className}
+      aria-hidden="true"
       viewBox={`${CENTER - RADIUS} ${CENTER - RADIUS} ${diameter} ${diameter}`}
     >
       {BRAND_MARK_SLICES.map((palette, index) => (

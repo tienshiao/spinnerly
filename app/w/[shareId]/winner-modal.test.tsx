@@ -11,6 +11,8 @@ import { userEvent } from '@testing-library/user-event'
 import { useRef, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { WheelRole } from '@/lib/wheels/use-wheel-session'
+
 import { WinnerModal } from './winner-modal'
 
 /**
@@ -41,10 +43,12 @@ function stubReducedMotion(matches: boolean): void {
  */
 function Harness({
   label = 'Tacos',
+  role = 'editor',
   onClose,
   onSpinAgain,
 }: {
   label?: string
+  role?: WheelRole
   onClose?: () => void
   onSpinAgain?: () => void
 }) {
@@ -69,6 +73,7 @@ function Harness({
       <WinnerModal
         open={open}
         label={label}
+        role={role}
         onClose={() => {
           setOpen(false)
           onClose?.()
@@ -116,6 +121,30 @@ describe('what it says', () => {
     render(<Harness />)
 
     expect(screen.getByRole('dialog').textContent).not.toMatch(/lunch|spot/i)
+  })
+
+  /**
+   * The half of the description that is not shared, and the reason it is not.
+   *
+   * "Marked as picked in the list" is true of the editor's page and false of
+   * the participant's — the badge is deliberately absent there (design doc
+   * section 6) — so a card that said it to both would send a viewer looking for
+   * a chip that does not exist. Found by spinning as a viewer, which only
+   * became possible in TASK-36.
+   */
+  it('claims the badge only where the badge is', () => {
+    render(<Harness role="editor" />)
+    expect(
+      within(screen.getByRole('dialog')).getByText(/marked as picked/i),
+    ).toBeTruthy()
+
+    cleanup()
+
+    render(<Harness role="participant" />)
+    const card = screen.getByRole('dialog')
+    expect(card.textContent).not.toMatch(/marked as picked/i)
+    // And in its place, the answer to the question a viewer actually has.
+    expect(within(card).getByText(/yours alone/i)).toBeTruthy()
   })
 })
 

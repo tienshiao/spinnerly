@@ -216,7 +216,9 @@ describe('role resolution', () => {
     await mount(api)
 
     expect(screen.getByText('Viewer')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /spin the wheel/i })).toBeNull()
+    // Asserted on what the viewer LOSES, since TASK-36 the spin button is no
+    // longer part of that — see 'a viewer's own spin' below.
+    expect(screen.queryByRole('button', { name: /rename wheel/i })).toBeNull()
     // A share link asks nobody anything: the URL already says what it is.
     expect(api.verifyEditor).not.toHaveBeenCalled()
   })
@@ -244,7 +246,7 @@ describe('role resolution', () => {
     await mount(api)
 
     expect(screen.getByText('Viewer')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /spin the wheel/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /rename wheel/i })).toBeNull()
     expect(screen.getByRole('status').textContent).toContain(
       'not valid for this wheel',
     )
@@ -556,17 +558,61 @@ describe('previewing as a viewer', () => {
     await user.click(screen.getByRole('button', { name: /preview as viewer/i }))
 
     expect(screen.getByText('Viewer')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /spin the wheel/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /rename wheel/i })).toBeNull()
     // The panel is handed the previewed role rather than `isEditor`, so the
     // preview is a view of the whole page and not of the header alone.
     expect(screen.queryByRole('textbox', { name: 'Add an option' })).toBeNull()
     expect(screen.queryByRole('button', { name: /remove tacos/i })).toBeNull()
 
+    // And the spin survives, because it is no longer an editor affordance —
+    // TASK-36. A preview that took it away would be showing the editor a
+    // participant view that has not existed since.
+    expect(screen.getByRole('button', { name: /spin the wheel/i })).toBeTruthy()
+
     await user.click(screen.getByRole('button', { name: /back to editing/i }))
 
     expect(screen.getByText('Editor')).toBeTruthy()
     expect(screen.getByRole('button', { name: /spin the wheel/i })).toBeTruthy()
+  })
+
+  /**
+   * The other direction of the mid-spin refusal, and it is worth its own case
+   * because the spin now STARTS from inside the preview. The guard is one
+   * `spin.spinning` check either way, but "can an editor strand themselves in
+   * the participant view" is not a question the editor-side test asks.
+   */
+  it('holds an editor in the preview for the length of a spin started there', async () => {
+    setHash(`#e=${TOKEN}`)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    try {
+      await mount(fakeApi('editor'))
+      await user.click(
+        screen.getByRole('button', { name: /preview as viewer/i }),
+      )
+
+      await user.click(screen.getByRole('button', { name: /spin the wheel/i }))
+      await user.click(screen.getByRole('button', { name: /back to editing/i }))
+
+      expect(
+        screen.getByText('Viewer'),
+        'the way out is refused while the wheel is moving',
+      ).toBeTruthy()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      // And the result is the participant's, on the participant's card.
+      expect(screen.getByText(/that spin was yours alone/i)).toBeTruthy()
+
+      await user.click(screen.getByRole('button', { name: /^nice$/i }))
+      await user.click(screen.getByRole('button', { name: /back to editing/i }))
+      expect(screen.getByText('Editor')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('is offered to an editor and to nobody else', async () => {
@@ -578,12 +624,16 @@ describe('previewing as a viewer', () => {
   })
 
   /**
-   * Refused for the 4.3 seconds a spin is running, because `dismiss()` is itself
-   * guarded against running mid-spin — so previewing there would freeze the
-   * wheel with no control left to thaw it, and the result would land behind the
-   * preview and be cleared unseen on the way back to editing. Asserted on
-   * behaviour rather than on the disabled attribute: what must be true is that
-   * the editor still learns what the wheel landed on.
+   * Refused for the 4.3 seconds a spin is running, so the page does not
+   * rearrange itself under a wheel that is still moving. Asserted on behaviour
+   * rather than on the disabled attribute — both the page and the header have
+   * to refuse, or the control is live and does nothing.
+   *
+   * This used to be a correctness guard rather than a comfort one: the winner
+   * modal was editor-only, so a spin that finished behind the preview announced
+   * itself to nobody. TASK-36 sent the modal into the participant view, which
+   * makes the result safe either way — the refusal is kept because switching
+   * views mid-rotation is disorienting, not because anything is lost.
    */
   it('refuses to preview mid-spin, and still announces the result', async () => {
     setHash(`#e=${TOKEN}`)
@@ -608,8 +658,7 @@ describe('previewing as a viewer', () => {
         await vi.advanceTimersByTimeAsync(5000)
       })
 
-      // The whole point of refusing: the winner modal is editor-only, so it
-      // would have opened behind the preview and been dismissed unread.
+      // The result still arrives, on the view the spin was started from.
       expect(screen.getByText(/landed on/i)).toBeTruthy()
 
       // And the refusal lasts exactly as long as the spin. The modal has to be
@@ -1134,20 +1183,103 @@ describe('naming a wheel on arrival', () => {
 })
 
 /**
- * AC 6, from decision 13: the spin exists only in the spinning browser in v1.
- * The prototype's "Watching live" is gone, because a participant told to watch
- * a wheel that will never move will reasonably conclude the page is broken.
+ * Design doc section 6's copy rule, which TASK-36 turned around.
+ *
+ * It used to be "leave the spin out of viewer copy", because there was no spin
+ * in the viewer's page to describe. There is one now, so the rule is that the
+ * copy must not imply the spin is SHARED: the prototype's "Watching live"
+ * promises the editor's rotation, which still never arrives, and a participant
+ * waiting for it will reasonably conclude the page is broken.
  */
 describe('what a participant is promised', () => {
-  it('says nothing about watching, live updates, or a spin', async () => {
+  it('says nothing about watching or live updates', async () => {
     await mount(fakeApi())
 
     const page = document.body.textContent ?? ''
-    for (const forbidden of ['Watching', 'watch', 'live', 'Spinning']) {
+    // 'Spinning' is deliberately NOT here any more: it is the spin button's own
+    // busy label, and forbidding it would forbid the feature this suite exists
+    // to describe.
+    for (const forbidden of ['Watching', 'watch', 'live']) {
       expect(page, `viewer copy must not mention "${forbidden}"`).not.toContain(
         forbidden,
       )
     }
+  })
+
+  it('says the spin goes nowhere', async () => {
+    await mount(fakeApi('not-editor'))
+
+    // The question a viewer actually has, answered before it is asked. Loose on
+    // the wording and strict on the claim: some phrase has to deny that anyone
+    // else saw it.
+    expect(document.body.textContent ?? '').toMatch(
+      /not sent to anyone else|yours alone/i,
+    )
+  })
+})
+
+/**
+ * TASK-36. The spin used to be editor-only, which left a viewer reading a list
+ * beside a wheel that never moved.
+ *
+ * Two claims, and the second is the one that keeps the feature honest: the
+ * viewer gets the whole thing — rotation, result, "Spin again" — and none of it
+ * leaves the browser. Design doc section 6 already makes every v1 spin local,
+ * so there is no endpoint to call by mistake; what this pins is that nobody
+ * later reaches for one to "record" a viewer's spin.
+ */
+describe("a viewer's own spin", () => {
+  it('turns the wheel and announces the result, with no token at all', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+
+    try {
+      await mount(fakeApi())
+
+      expect(screen.getByText('Viewer')).toBeTruthy()
+      await user.click(screen.getByRole('button', { name: /spin the wheel/i }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      expect(screen.getByText(/landed on/i)).toBeTruthy()
+      expect(
+        screen.getByRole('button', { name: /spin again/i }),
+        'a viewer gets the whole card, not a cut-down one',
+      ).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('writes nothing and asks nothing', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    const api = fakeApi()
+
+    try {
+      await mount(api)
+      await user.click(screen.getByRole('button', { name: /spin the wheel/i }))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      // Every method on the write client, so this catches a new one being
+      // wired in as much as an existing one being called.
+      for (const [name, method] of Object.entries(api)) {
+        expect(method, `a spin must not call ${name}`).not.toHaveBeenCalled()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('offers the sound toggle, since a viewer can now make the noise', async () => {
+    await mount(fakeApi())
+
+    expect(screen.getByRole('button', { name: /sound/i })).toBeTruthy()
   })
 })
 

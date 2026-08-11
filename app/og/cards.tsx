@@ -135,7 +135,9 @@ function OptionPill({ label, palette }: { label: string; palette: number }) {
 export function WheelCard({ preview }: { preview: WheelPreview | null }) {
   const title = displayTitle(preview?.title)
   const count = preview?.optionCount ?? 0
-  const { pills, overflow } = optionPills(preview?.options ?? [])
+  // `count`, not `options.length`: the labels are a sample and the count is the
+  // wheel's, so "+N more" has to be counted off the second. See `optionPills`.
+  const { pills, overflow } = optionPills(preview?.options ?? [], count)
 
   return (
     <div
