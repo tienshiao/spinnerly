@@ -1,11 +1,11 @@
 ---
 id: TASK-6
 title: Author and deploy the Firestore security rules
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:36'
-updated_date: '2026-08-09 03:58'
+updated_date: '2026-08-11 09:26'
 labels: []
 dependencies:
   - TASK-5
@@ -27,7 +27,7 @@ Collection group queries need the same scrutiny: verify collectionGroup("suggest
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 firestore.rules matches the policy in design doc section 5 and is deployed via a documented command
+- [x] #1 firestore.rules matches the policy in design doc section 5 and is deployed via a documented command
 - [x] #2 A rules unit test suite runs against the Firestore emulator in CI
 - [x] #3 Test: a client get on wheels/{knownId} succeeds
 - [x] #4 Test: a client list on the wheels collection is denied
@@ -98,6 +98,15 @@ Re-verified after the fixes: unit 283, emulator 269, lint, typecheck, format:che
 AC 2 ticked after the fact. .github/workflows/ci.yml provisions temurin 17 and runs npm run test:emulator under firebase emulators:exec, and the emulator project is the one firestore.rules.emulator.test.ts belongs to — so the 40-case suite has been running in CI since this task shipped it. It was left unchecked because AC 1 and AC 2 were being tracked as one pending item, and only AC 1 is actually blocked.
 
 AC 1 stays open, and only its second half: the rules match design doc section 5 and the deploy command is documented as npm run rules:deploy. Nothing has been deployed, because .firebaserc still points at demo-spinnerly and no cloud project exists. That step belongs to TASK-27, which also owns TASK-14's TTL apply for the same reason.
+
+Rules deployed to both cloud projects from TASK-27, via the documented command:
+
+  npm run rules:deploy -- --project spinnerly-prod
+  npm run rules:deploy -- --project spinnerly-preview
+
+Both compiled without error and released to cloud.firestore. The command is the rules:deploy script in package.json, and the same invocation is recorded in the header comment of firestore.rules.
+
+Worth noting why this mattered more than a formality: firebase-tools creates a new database with default closed rules that deny all access, so until this ran neither environment could serve a single client read and every onSnapshot listener would have failed on permission-denied. The deployed policy is the same file the emulator has been enforcing all along, so nothing about its behaviour is newly exercised - only newly reachable from the cloud.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -141,3 +150,9 @@ AC 2 — the workflow is written and its steps all pass locally, but CI has neve
 One ordering constraint that belongs to whoever deploys, recorded in section 5 as well: rules ship separately from application code, and rules must go first. A client reading a path the deployed rules do not yet permit fails with permission-denied, which presents as a wheel page that renders and then stays empty. The reverse is inert.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Authored the Firestore read policy in firestore.rules to design doc section 5, covered it with a 40-case emulator suite that runs in CI, and deployed it to both cloud projects with npm run rules:deploy. The policy grants public read of a wheel by ID, denies every client write, denies listing the wheels collection, denies all access to wheelSecrets, and denies collection group queries by the absence of a recursive-wildcard rule - the one denial that can only be stated as a test. Verified by the emulator suite plus a clean compile and release to spinnerly-prod and spinnerly-preview; the deploy was load-bearing rather than ceremonial, since firebase-tools creates databases with default deny-all rules that would have failed every onSnapshot listener.
+<!-- SECTION:FINAL_SUMMARY:END -->

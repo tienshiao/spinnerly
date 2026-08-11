@@ -1,11 +1,11 @@
 ---
 id: TASK-14
 title: Implement sliding expiry and the Firestore TTL policy
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:37'
-updated_date: '2026-08-08 09:27'
+updated_date: '2026-08-11 09:26'
 labels: []
 dependencies:
   - TASK-9
@@ -30,7 +30,7 @@ Firestore TTL deletes the wheel document. Subcollections are not cascaded — co
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Every mutating route slides expiresAt forward by 30 days
-- [ ] #2 A Firestore TTL policy on the expiresAt field of the wheels collection is configured and documented
+- [x] #2 A Firestore TTL policy on the expiresAt field of the wheels collection is configured and documented
 - [x] #3 Orphaned suggestion and spin subcollection documents after a parent TTL delete are either cleaned up or explicitly accepted with a written rationale
 - [x] #4 A request against an expired-but-not-yet-reaped wheel behaves predictably and is documented
 - [x] #5 Tests confirm expiresAt moves forward on option add, option remove, suggestion submit and suggestion accept
@@ -92,6 +92,18 @@ Post-review fixes (/code-review, six findings, all confirmed and fixed):
 - LOW, the script's header runbook said ttl:configure means 'apply, then verify' when it only applies. Corrected, with the exit codes stated.
 
 Unit 283 (up from 270), emulator 229 (up from 228); typecheck, lint, format:check clean, production build succeeds. All three script guards re-verified to fire.
+
+From TASK-27: the TTL policies are applied to spinnerly-prod only. spinnerly-preview has none, and will not get one while the billing account sits at its five-project cap - Firestore TTL is a Blaze feature and preview stays on Spark.
+
+AC 2 should be read against prod. Preview is knowingly uncovered, with the rationale recorded on TASK-27.
+
+Practical consequence for anyone testing expiry: a preview deploy never reaps, so the sliding-expiry behaviour this task implements cannot be observed there. The route-level half - expiresAt moving forward on every mutating route - is fully covered by the emulator tests and is unaffected, since that is application code rather than a Firestore policy.
+
+TTL policies are ACTIVE on spinnerly-prod for all three collection groups - wheels, wheelSecrets and suggestions - verified by npm run ttl:check exiting 0.
+
+AC 2 is checked against prod. spinnerly-preview remains uncovered and stays that way while the billing account is at its five-project cap; the rationale is on TASK-27 and repeated in the note above.
+
+What ACTIVE does and does not assert, quoting the check output so nobody over-reads it: the policies exist and are active, not that anything has been deleted. Firestore reaps typically within 24 hours of expiry and expired documents keep serving reads until it does, which is design doc section 8 behaviour and not a fault.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -117,3 +129,9 @@ AC 2 is deliberately left unchecked. The configuration and its verification comm
 What remains is one command per environment, and it is recorded on TASK-27 as a step. Everything else in this task is complete and verified.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented sliding 30-day expiry across all six mutating routes through one shared helper, and applied the Firestore TTL policies that reap on it. Every mutating route pushes expiresAt forward on both the wheel and its secret, with the secret carrying a margin so the two are never reaped in the dangerous order. TTL policies cover three collection groups rather than one - wheels, wheelSecrets and suggestions - because a TTL delete does not cascade to subcollections and an orphaned secret would leave a live publicly suggestable wheel whose owner had lost the kill switch. Verified by emulator tests asserting expiresAt moves forward on option add, option remove, suggestion submit and suggestion accept, and by npm run ttl:check reporting ACTIVE for all three groups on spinnerly-prod. spinnerly-preview is knowingly uncovered: TTL needs Blaze, the billing account is at its five-project cap, and nothing in the application depends on a policy existing.
+<!-- SECTION:FINAL_SUMMARY:END -->

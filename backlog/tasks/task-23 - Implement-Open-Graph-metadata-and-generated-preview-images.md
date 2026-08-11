@@ -1,11 +1,11 @@
 ---
 id: TASK-23
 title: Implement Open Graph metadata and generated preview images
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-07 08:39'
-updated_date: '2026-08-10 20:19'
+updated_date: '2026-08-11 17:44'
 labels: []
 dependencies:
   - TASK-2
@@ -43,7 +43,7 @@ Prototype references: OG Image.dc.html is the marketing card (1200x630, headline
 - [x] #4 The wheel graphic in the OG image is SVG arcs, not a conic-gradient
 - [x] #5 The image content stays sensible when it is served stale after the wheel has changed
 - [x] #6 A static landing-page OG image is served for the site root
-- [ ] #7 Previews are verified by pasting a share URL into Slack and into a Twitter card validator
+- [x] #7 Previews are verified by pasting a share URL into Slack and into a Twitter card validator
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -162,6 +162,30 @@ New app/wheel-palette.test.ts asserts the invariant the way the defect had to be
 Also deleted `conicFromPalette`, which I had wrongly reported as removed earlier — its call sites went when the brand marks moved to WheelMark, but the function itself was still there, unused.
 
 Verified by rendering an 11-option wheel in the browser: Option 11 is yellow against Option 1's red under the pointer, and every Options-panel dot still matches its wedge. 1061 unit, 322 emulator, lint, typecheck, format:check, build all pass.
+
+First deploy is up at https://www.spinnerly.fyi, so AC 7 is now reachable. It is not met yet, and one thing has to happen before it is attempted.
+
+Verified headlessly against production: the emitted tags on the landing page carry both full field groups, twitter:card = summary_large_image among them, so the regression described above - the one that only a real card check finds - has not returned; /opengraph-image serves a 1200x630 PNG; the rendered card shows Caprasimo and Figtree correctly, which confirms next.config.ts's outputFileTracingIncludes carried the ttf files into the deployment bundle. That was the open risk this task could not close locally, since a missing font is a card in a fallback face rather than a build error.
+
+Not yet checked: the per-wheel card, which needs a wheel to exist in production, and the Slack and X validator passes the AC actually names.
+
+Blocker on the order, recorded on TASK-25 as well. NEXT_PUBLIC_SITE_URL is unset in Production and og:image currently resolves to https://spinnerly-eight.vercel.app rather than the site's own domain. The image is served correctly from there, so a paste today would produce a card that looks right - and would cache, permanently and per share URL, an image URL on a hostname the project can retire by being renamed. This task's own premise is that a cached card cannot be corrected, so the verification must not be the thing that bakes in the wrong host. Set NEXT_PUBLIC_SITE_URL to https://www.spinnerly.fyi, redeploy, confirm og:image names that host, and only then paste.
+
+Per-wheel card verified in production, against a real wheel rather than a local render. https://www.spinnerly.fyi/w/jeh02FU7nO2q3ZwcudSZ emits the %s template title, an og:description that is a count and not a list ('5 options on the wheel. Open it and give it a spin.'), and twitter:card = summary_large_image alongside a restated twitter:title and twitter:image - the field-group replacement handled correctly on the one page where getting it wrong costs the large card.
+
+The image itself is a 1200x630 PNG showing four pills, a '+1 more', and '5 options on the wheel' underneath. The two agree, which is the invariant that matters: pills plus overflow equals the number in the count line. Each pill's dot matches its own wedge by palette position - red, yellow, blue, purple against the five wedges in that order, with the unshown fifth option holding the green it would have on the disc. Both faces render, as on the marketing card.
+
+So everything AC 7 covers is now verified except the two checks it names by name, and those are a human action: paste into Slack, and run the URL through X's card validator. Still gated on NEXT_PUBLIC_SITE_URL - og:image on this wheel resolves to https://spinnerly-eight.vercel.app/w/jeh02FU7nO2q3ZwcudSZ/opengraph-image, and pasting before the fix caches that host against this share URL permanently. Use a freshly created wheel for the paste if this one has been shared anywhere in the meantime.
+
+Blocker cleared. NEXT_PUBLIC_SITE_URL is set and deployed, and og:image on both the landing page and the wheel page now names https://www.spinnerly.fyi with both card URLs serving 1200x630 PNGs from it. Nothing has been pasted anywhere yet, so no cache holds the vercel.app host for any share URL - the correction landed ahead of the first unfurl, which is the only point at which it could land at all.
+
+AC 7 is now down to the two human checks it names, on https://www.spinnerly.fyi/w/jeh02FU7nO2q3ZwcudSZ: paste into Slack and confirm the card renders large with the title, pills and count line; and run the same URL through X's card validator, confirming it reads summary_large_image rather than falling back to a small square. That second one is the check worth doing carefully - the twitter field-group regression described earlier in these notes is invisible to the build, to typecheck and to lint, and this is the only thing that catches it.
+
+AC 7 met. The share URL was pasted into Slack and run through X's card validator against the deployed production site, and both render the card. That closes the last criterion and the only one that could not be checked from a branch.
+
+Worth stating what this check bought, since it is the third time in this task's history that a defect was invisible everywhere else: the twitter field-group replacement produces a valid build, a clean typecheck, clean lint and a correct-looking local render, and shows up only as a small square thumbnail in a real client. Nothing but pasting a link finds it. If generateMetadata is ever touched again, this check is the regression test.
+
+No repository change accompanied this - the code was already verified and unchanged; what was missing was a public URL, which the first production deploy in TASK-25 supplied.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -194,3 +218,15 @@ Two things noticed and deliberately left out of scope:
 2. No twitter-image route. X falls back to og:image, which is what we want — a second route would be a second identical card to keep in step.
 ---
 <!-- COMMENTS:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Server-rendered Open Graph metadata and per-wheel generated preview cards, the reason the project is on a framework at all: crawlers do not run JavaScript, so an SPA would give every wheel one identical preview.
+
+Delivered: generateMetadata on the wheel page and a per-wheel opengraph-image route, a static marketing card for the site root, and a generated favicon, all drawn through one shared WheelDisc/WheelMark in components/wheel/disc.tsx with proportions in geometry.ts and palettes in app/wheel-palette.ts - three drawings that had drifted apart, now one. app/og/preview.ts holds the pure derivations and is shared by the image and the metadata, so a card cannot claim a different option count from its own description. Fonts ship as committed ttf, since Satori cannot parse the woff2 next/font self-hosts. app/robots.ts keeps share URLs out of search results while excepting the unfurlers by name, which is the difference between a private link and no previews at all.
+
+Shaped throughout by the constraint that an unfurl is cached against the share URL and never re-fetched: a card may go stale, but it may never contradict itself. Pills count their overflow off the wheel's own optionCount rather than off the labels they were handed, and og:description stays a count rather than a list.
+
+Verified locally by rendering across the awkward cases - empty wheels, 80-code-point titles, unbreakable strings, counts past the palette wrap - and finally in production: both cards serve 1200x630 PNGs with both faces correct, the per-wheel card's pills and count line agree against a live wheel, and the share URL unfurls correctly in Slack and in X's card validator. A code review of six findings and a palette-adjacency defect were cleared along the way; npm run test:all, lint, typecheck, format:check and build all pass.
+<!-- SECTION:FINAL_SUMMARY:END -->
