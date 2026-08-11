@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "demo-spinnerly"
+    "default": "demo-spinnerly",
+    "prod": "spinnerly-prod",
+    "preview": "spinnerly-preview"
   }
 }
