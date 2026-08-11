@@ -223,27 +223,27 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
   }, [])
 
   /**
-   * Entering the preview closes the result, so it has to say so.
+   * Entering the preview closes the result, and refuses outright mid-spin.
    *
-   * `useSpin` freezes the wheel on the snapshot it spun from the click until
-   * `dismiss()` runs, and the result strip below — the only thing that calls it
-   * — is editor-only. Toggling into the preview with a result on screen would
-   * therefore take away the last control that could thaw the wheel, leaving it
-   * showing a stale option list for the rest of the session: added options stop
-   * appearing, accepted suggestions never show up, and there is no error
-   * anywhere to explain it. Found by spinning and then previewing.
+   * **Both were once load-bearing and TASK-36 demoted them.** The winner modal
+   * and the spin button used to be editor-only, so previewing with a result on
+   * screen took away the only control that could call `dismiss()` — the wheel
+   * stayed frozen on the snapshot it spun for the rest of the session, added
+   * options stopped appearing, and nothing anywhere explained it. Both controls
+   * now follow the page into the preview, so neither failure is reachable.
    *
-   * Safe in the other direction too — `dismiss()` on a wheel with no result is
-   * a no-op — so this is one call rather than a condition.
+   * They are kept anyway, and it is worth being straight about why, because the
+   * comment that used to justify them no longer applies to the code underneath:
    *
-   * **Refused outright mid-spin**, because there `dismiss()` cannot help: it is
-   * guarded against running while a spin is in flight, since thawing then would
-   * undo the freeze AC 4 is about. Previewing anyway leaves the wheel frozen AND
-   * hides the strip that could thaw it, and the result — which lands 4.4s after
-   * the click — is set behind the preview and then cleared unseen on the way
-   * back, so the editor never learns what the wheel landed on. The header
-   * disables the control while `spin.spinning` so there is no dead button; this
-   * guard is what makes it a fact about the page rather than about one caller.
+   * - `dismiss()` stays because entering the preview is a change of what the
+   *   page is showing, and a result card from the editor view riding along into
+   *   it is the previous view's leftovers. Safe unconditionally — `dismiss()`
+   *   on a wheel with no result is a no-op — so it is one call, not a branch.
+   * - The mid-spin refusal stays because rearranging the page under a wheel in
+   *   flight is disorienting, not because anything is lost by it. The header
+   *   disables the control while `spin.spinning` so there is no dead button;
+   *   this guard is what makes it a fact about the page rather than about one
+   *   caller.
    */
   const togglePreview = useCallback(() => {
     if (spin.spinning) return
@@ -254,12 +254,10 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
      *
      * "Spin again" closes the card and starts the wheel 120ms later, and for
      * those 120ms `spin.spinning` is false — so the guard above does not refuse
-     * and the header's control is not disabled. Previewing in that gap would
-     * start a spin under the participant view, where both the winner modal and
-     * the live region are editor-only: the result lands four seconds later with
-     * nothing to show it, and is then cleared unseen on the way back. Which is
-     * the exact failure the guard above exists to prevent, arrived at through
-     * the one window where it does not look.
+     * and the header's control is not disabled. Left alone, the wheel would
+     * start moving a tenth of a second into a view the editor asked for and
+     * then hold them there, since the way back out is refused for as long as
+     * the spin runs.
      *
      * Dropped rather than refused, because the preview is the newer of the two
      * intentions — and a control that ignores a click for a tenth of a second
@@ -481,84 +479,118 @@ export function WheelPage({ shareId, api }: WheelPageProps) {
             />
           </div>
 
-          {role === 'editor' ? (
-            <>
-              {/*
-                `focusableWhenDisabled`, because this button DISABLES ITSELF
-                under the keyboard user most entitled to be on it. Closing the
-                winner card puts focus back here — AC 4 — and both a direct
-                press and the queued "Spin again" then set `spinning` within
-                the beat. A natively disabled button is dropped from the tab
-                order, so the browser moves focus to `<body>`: a screen reader
-                announces nothing, or reads from the top of the document, for
-                the whole 4.4 seconds of a spin that user just started. Kept
-                focusable, the button holds focus and reads as what it is —
-                "Spinning…", unavailable — until the modal's `initialFocus`
-                takes over at the settle.
+          {/*
+            Both roles, and TASK-36 is where that changed. The spin was editor
+            only, which left a viewer reading a list beside a wheel that never
+            moved — and the reason it was withheld does not survive inspection.
+            Decision 13 answers "does a participant see the EDITOR's spin", and
+            that answer is still no; a spin of their OWN is the same local,
+            unpropagated thing an editor's already is. Nothing is written,
+            nothing is read, and nobody else's page changes.
 
-                AC 5's announcement itself lives with the winner modal, inside
-                its portal — see the note there for why the page proper cannot
-                carry a live region that survives the modal opening.
-              */}
-              <Button
-                ref={spinButtonRef}
-                size="lg"
-                onClick={startSpin}
-                disabled={!spin.canSpin}
-                focusableWhenDisabled
-                className="px-[46px] py-4 text-xl shadow-[var(--shadow-md)]"
-              >
-                {spin.spinning ? 'Spinning…' : 'Spin the wheel'}
-              </Button>
+            `focusableWhenDisabled`, because this button DISABLES ITSELF under
+            the keyboard user most entitled to be on it. Closing the winner card
+            puts focus back here — AC 4 — and both a direct press and the queued
+            "Spin again" then set `spinning` within the beat. A natively
+            disabled button is dropped from the tab order, so the browser moves
+            focus to `<body>`: a screen reader announces nothing, or reads from
+            the top of the document, for the whole 4.4 seconds of a spin that
+            user just started. Kept focusable, the button holds focus and reads
+            as what it is — "Spinning…", unavailable — until the modal's
+            `initialFocus` takes over at the settle.
 
-              {/*
-                `onClose` is `dismiss`, and that is not a detail: the wheel
-                holds its frozen snapshot from spin start until something calls
-                it, so a modal that closed on its own state would leave the
-                wheel showing a stale option list for the rest of the session —
-                added options stop appearing, and it reads as a broken listener
-                rather than a missing call.
+            TASK-17 AC 5's announcement itself lives with the winner modal,
+            inside its portal — see the note there for why the page proper
+            cannot carry a live region that survives the modal opening.
+          */}
+          <Button
+            ref={spinButtonRef}
+            size="lg"
+            onClick={startSpin}
+            disabled={!spin.canSpin}
+            focusableWhenDisabled
+            className="px-[46px] py-4 text-xl shadow-[var(--shadow-md)]"
+          >
+            {spin.spinning ? 'Spinning…' : 'Spin the wheel'}
+          </Button>
 
-                Rendered unconditionally with `open` doing the work, rather
-                than behind `spin.result !== null`. Base UI restores focus when
-                its dialog CLOSES; a tree yanked out from under it never gets
-                that far, and AC 4's return to the spin button would be left to
-                the inert workaround's fallback alone.
+          {/*
+            Under the button rather than instead of it, and the wording carries
+            the whole of design doc section 6's copy rule.
 
-                The empty `label` on the closed pass is not a hole in that: the
-                modal holds the last one it was given for exactly this, because
-                "the card leaves in the same commit" is very nearly true and not
-                quite — see the note on `lastLabel`.
-              */}
-              <WinnerModal
-                open={spin.result !== null}
-                label={spin.result?.option.label ?? ''}
-                onClose={spin.dismiss}
-                onSpinAgain={spinAgain}
-                returnFocusTo={spinButtonRef}
-              />
+            The rule used to be "leave the spin out of it", because there was no
+            spin here to describe. Now there is, and what the copy must not
+            imply is that it is SHARED — the prototype's "Watching live" would be
+            wrong in the other direction now, promising an editor's rotation
+            that still never arrives. So the line names the spin and denies the
+            propagation in the same breath, which is also the honest answer to
+            the question a viewer actually has: did everyone just see that?
 
-              {/* Editor-only, in the corner of the card whose wheel makes the
-                  noise. Decision 13 keeps the spin in the spinning browser in
-                  v1, so a participant has nothing to mute and a control offered
-                  to them would be a promise the page does not keep. */}
-              <SoundToggle className="absolute right-3 bottom-3" />
-            </>
-          ) : (
+            Nothing equivalent for an editor. Their spin is equally local, but
+            they are the one person on the page who already knows what the wheel
+            is for, and a standing disclaimer under the primary action of the
+            product reads as an apology for it.
+          */}
+          {role === 'participant' && (
             /*
-              AC 6. The prototype's "Watching live" is gone: decision 13 keeps
-              the spin in the spinning browser alone in v1, so any copy hinting
-              at a rotation about to happen here describes a feature that does
-              not exist, and a participant watching a still wheel for it would
-              reasonably conclude the page is broken. What is left says what a
-              participant can actually do.
+              `pb-7` reserves the corner the sound toggle sits in, and it is not
+              cosmetic. The toggle is 36px at `bottom-3`, so it rises 48px from
+              the section's padding edge while the content box stops at `p-5`'s
+              20px — it intrudes 28px into the flow, over whatever the last
+              in-flow child is. That used to be a centred button, which is never
+              wide enough to reach the corner; it is now this paragraph, and at
+              320px — the narrowest width the grid above is built to survive —
+              its final line runs under the toggle. Measured, not guessed: the
+              collision is at 320 and the clearance at 360 is 39px, which is one
+              re-wrap away from being nothing.
+
+              On the paragraph rather than on the section, because only the
+              participant view has a last child that can reach that far, and
+              padding the card would move the toggle with it.
             */
-            <p className="max-w-[420px] text-center text-[15px] leading-[1.55] text-neutral-600">
+            <p className="max-w-[420px] pb-7 text-center text-[15px] leading-[1.55] text-neutral-600">
               {previewing
-                ? 'This is what everyone with the share link sees.'
-                : 'Have a look at what is on the wheel, and suggest an option if something is missing.'}
+                ? 'This is what everyone with the share link sees. A spin here is your own — it is not sent anywhere.'
+                : 'Spin it as often as you like — the result is yours alone and is not sent to anyone else. Suggest an option below if something is missing.'}
             </p>
           )}
+
+          {/*
+            `onClose` is `dismiss`, and that is not a detail: the wheel holds its
+            frozen snapshot from spin start until something calls it, so a modal
+            that closed on its own state would leave the wheel showing a stale
+            option list for the rest of the session — added options stop
+            appearing, and it reads as a broken listener rather than a missing
+            call.
+
+            Rendered unconditionally with `open` doing the work, rather than
+            behind `spin.result !== null`. Base UI restores focus when its dialog
+            CLOSES; a tree yanked out from under it never gets that far, and AC
+            4's return to the spin button would be left to the inert
+            workaround's fallback alone.
+
+            The empty `label` on the closed pass is not a hole in that: the modal
+            holds the last one it was given for exactly this, because "the card
+            leaves in the same commit" is very nearly true and not quite — see
+            the note on `lastLabel`.
+          */}
+          <WinnerModal
+            open={spin.result !== null}
+            label={spin.result?.option.label ?? ''}
+            /* The PREVIEWED role, so an editor checking the participant view is
+               told what a participant is told — including that the "Picked"
+               badge they are about to not see is not missing. */
+            role={role}
+            onClose={spin.dismiss}
+            onSpinAgain={spinAgain}
+            returnFocusTo={spinButtonRef}
+          />
+
+          {/* In the corner of the card whose wheel makes the noise. Offered to
+              both roles because both roles can now make it — a viewer who can
+              spin can wake the ticks, and a mute they cannot reach is worse
+              than no mute at all. */}
+          <SoundToggle className="absolute right-3 bottom-3" />
         </section>
 
         <section className="flex flex-col gap-[22px]">

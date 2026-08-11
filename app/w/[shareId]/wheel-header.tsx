@@ -103,12 +103,11 @@ export function WheelHeader({
 
       <div className="flex flex-wrap items-center gap-2.5">
         {isEditor && (
-          /* Disabled for the 4.3 seconds a spin is in flight. The wheel is
-             frozen on the snapshot it spun until the result is dismissed, and
-             the strip that dismisses it is editor-only — so previewing mid-spin
-             would hide the only control that can thaw the wheel and swallow the
-             result, which lands behind the preview and is cleared unseen on the
-             way back. The page refuses it too; this is what stops it being a
+          /* Disabled for the 4.3 seconds a spin is in flight, because swapping
+             the whole page out from under a wheel that is still moving is
+             disorienting — the spin itself is unharmed, since TASK-36 sent the
+             spin button and the winner modal into the participant view too. The
+             page refuses the toggle as well; this is what stops it being a
              button that looks live and does nothing. */
           <Button
             variant="secondary"

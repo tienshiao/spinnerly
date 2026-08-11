@@ -8,6 +8,7 @@ import { Confetti } from '@/components/wheel/confetti'
 import { useReducedMotion } from '@/components/wheel/use-spin'
 import { useInertPopup } from '@/lib/base-ui-inert'
 import { cn } from '@/lib/utils'
+import type { WheelRole } from '@/lib/wheels/use-wheel-session'
 
 /**
  * The payoff moment: the wheel landed, and this says so.
@@ -45,6 +46,12 @@ export const SPIN_AGAIN_DELAY_MS = 120
 export type WinnerModalProps = {
   /** The winning label. Rendered as the dialog's title. */
   label: string
+  /**
+   * Which page this card is closing over, because the two are owed different
+   * sentences — see the note on the description below. The PREVIEWED role, so
+   * an editor checking the participant view is told what a participant is told.
+   */
+  role: WheelRole
   open: boolean
   /** Must reach `useSpin`'s `dismiss`, whatever else it does. */
   onClose: () => void
@@ -63,6 +70,7 @@ export type WinnerModalProps = {
 
 export function WinnerModal({
   label,
+  role,
   open,
   onClose,
   onSpinAgain,
@@ -259,11 +267,28 @@ export function WinnerModal({
             {shown}
           </Dialog.Title>
 
-          {/* Decision 15: the badge is this browser's own and the wheel keeps
-              every option, which is the one thing people ask about at this
-              moment — "is it gone now?". */}
+          {/*
+            Both halves answer a question somebody has at this exact moment, and
+            the first half is different per role because the page behind the
+            card is.
+
+            "The wheel keeps every option" is the shared one — "is it gone
+            now?" is what people ask when a wheel announces a winner, and
+            decision 15 keeps every option on it.
+
+            The sentence before it is not shared, and handing a participant the
+            editor's would be a promise the page does not keep: the "Picked"
+            badge is deliberately absent from the participant options list
+            (design doc section 6), so "Marked as picked in the list" would send
+            a viewer looking for a chip that is not there. What they get instead
+            is the answer to THEIR question — "did everyone just see that?" —
+            which is the one the copy under the spin button is also making, at
+            the moment it matters most.
+          */}
           <Dialog.Description className="mb-[26px] text-[15px] leading-[1.55] text-neutral-700">
-            Marked as picked in the list. The wheel keeps every option.
+            {role === 'editor'
+              ? 'Marked as picked in the list. The wheel keeps every option.'
+              : 'That spin was yours alone. The wheel keeps every option.'}
           </Dialog.Description>
 
           <div className="flex justify-center gap-2.5">

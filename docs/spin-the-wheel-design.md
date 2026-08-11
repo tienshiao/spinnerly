@@ -37,7 +37,7 @@ Canonical use case: a group deciding where to eat.
 | Role             | Has                        | Can                                                       |
 | ---------------- | -------------------------- | --------------------------------------------------------- |
 | **Owner/editor** | Edit URL (contains secret) | Read wheel, edit options, accept/reject suggestions, spin |
-| **Participant**  | Share URL                  | Read wheel, submit suggestions, watch                     |
+| **Participant**  | Share URL                  | Read wheel, submit suggestions, spin                      |
 
 Both roles are defined entirely by which URL you hold. There is no identity.
 
@@ -788,18 +788,44 @@ already freezes the list for every viewer (§9).
 **Residual, accepted:** a result may name an option deleted moments earlier. For
 a lunch app this is arguably correct — show the result, let the group re-spin.
 
-### Participants do not see the spin in v1
+### A spin belongs to the browser that ran it
 
-A direct consequence of the above: the spin exists only in the spinning browser.
-Participants see the option list update live, but no rotation, no result, no
-confetti. The editor announces the outcome the way they would anyway.
+A direct consequence of the above: a spin exists only in the browser that
+started it. It is not a document, not a request and not an event — the wheel
+turns, a result appears, and no other client learns that any of it happened.
 
-**The UI must not imply otherwise.** The prototype's viewer copy — "Watching
-live" — promises a synchronized experience that only arrives in phase 2 (§9),
-and a participant who stares at a still wheel waiting for it to move will
-reasonably conclude the app is broken. Viewer copy should describe what the
-participant can actually do — read the list, suggest an option — and leave the
-spin out of it.
+**Both roles get one.** The spin was editor-only until TASK-36, which left a
+participant reading a list beside a wheel that never moved. That restriction did
+not follow from anything: an editor's spin is already unpropagated, so a
+participant's is the identical local animation over the identical live option
+list, and withholding it bought no consistency because there was no shared state
+to be consistent with. What stays true is that nobody sees anybody else's spin —
+an editor does not see a participant's, and a participant does not see the
+editor's. Two people spinning the same wheel at the same moment get two
+unrelated results, which is the honest v1 model rather than a defect in it.
+
+**The UI must not imply the spin is shared.** The prototype's viewer copy —
+"Watching live" — promises a synchronized experience that only arrives in phase
+2 (§9), and a participant who stares at a still wheel waiting for the editor's
+rotation to arrive will reasonably conclude the app is broken. The rule was once
+"leave the spin out of viewer copy", which no longer holds now that there is a
+spin there to describe; it is now that viewer copy must name the spin **and**
+deny the propagation, so that "did everyone just see that?" is answered before
+it is asked.
+
+The "Picked" chip does **not** follow the spin into the participant view. It is
+already local-only (§4, decision 15), so this is a UI call rather than a data
+one: the chip reads as a record of what the group has already worked through,
+and one accumulated privately in a viewer's tab from spins nobody else witnessed
+would say something true of that tab and false of the wheel. `useSpin` records
+the set for both roles regardless; only the editor's option list renders it.
+
+**The winner card has to be told which of those two pages it is closing over.**
+Its description reads "Marked as picked in the list", which is true behind an
+editor's card and false behind a participant's — so the card takes the previewed
+role and swaps that sentence, or a viewer is sent looking for a chip that is not
+there. Nothing type-checks this; the sentence and the badge are in different
+files and neither knows about the other.
 
 **"Option", not "spot", throughout.** The prototype says "spot", which reads as
 a lunch venue and narrows the product to the one use case its mockup happens to
@@ -1013,32 +1039,32 @@ scoping separately rather than bolting on.
 
 ## 10. Decisions
 
-| #   | Question                                       | Decision                                                                                                                               |
-| --- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Is the edit URL transferable?                  | **Yes** — token is a bearer capability, multiple concurrent editors supported (§2, §6)                                                 |
-| 2   | Edits during spin animation?                   | **View frozen client-side**, data not locked — no server-side lock in either phase (§6)                                                |
-| 3   | Can participants see the suggestion queue?     | **Yes** — public queue, reject is a hard delete (§4)                                                                                   |
-| 4   | TTL length?                                    | **30 days, sliding** — refreshed on any activity (§8)                                                                                  |
-| 5   | Duplicate-wheel flow?                          | **Yes** — open to anyone with the share URL (§8)                                                                                       |
-| 6   | Does option order matter?                      | **No** — no reorder op; all mutations commute (§6)                                                                                     |
-| 7   | Framework?                                     | **Next.js App Router** — server-rendered OG metadata is the deciding factor (§3)                                                       |
-| 8   | Hosting?                                       | **Vercel** — simplicity; cross-cloud write hop is negligible at this volume (§3)                                                       |
-| 9   | Rate limiting in v1?                           | **Deferred** — App Check + per-wheel caps + budget alert instead of standing up Redis (§7)                                             |
-| 10  | Can option labels be edited in place?          | **No** — remove and re-add; no `PATCH` option endpoint. Keeps every mutation commutative (§6)                                          |
-| 11  | How do rejected suggestions appear?            | **They don't** — reject is a hard delete, no tombstone, no "Declined" chip (§4)                                                        |
-| 12  | Suggestion attribution?                        | **None** — no submitter name in v1; identity arrives deliberately with chat in phase 2 (§4, §9)                                        |
-| 13  | Do participants see a spin?                    | **No in v1** — the spin is local to the spinning browser, and the copy must say so (§6)                                                |
-| 14  | Mobile support?                                | **Responsive throughout, participant view mobile-first** — the share link lives in group chats (§1)                                    |
-| 15  | Is the "Picked" chip persisted?                | **No — local-only**, client state in the spinning browser, gone on refresh. No schema, no endpoint (§4)                                |
-| 16  | Where do the editor affordances live?          | **Title inline in the header; `suggestionsOpen` in the Suggestions panel header; duplicate in a header overflow menu** (§7)            |
-| 17  | Does duplicate rename the fork?                | **No — title copied verbatim.** Renaming is one field edit away if the forker wants it (§8)                                            |
-| 18  | Firestore mode and location?                   | **Native mode, `us-east1`** — pairs with Vercel's `iad1`; both choices are permanent (§3)                                              |
-| 19  | Local development environment?                 | **Firebase Emulator Suite** — no cloud project, no service account on dev machines, and it makes §5 rules testable (§3)                |
-| 20  | What happens to orphaned subcollections?       | **Each suggestion carries its own `expiresAt`**, set at submit and never slid. Never outlives its wheel; may die under a live one (§8) |
-| 21  | How does an expired-but-unreaped wheel behave? | **As a live wheel** — no route checks `expiresAt`, and any write slides it back out of danger (§8)                                     |
-| 22  | When does an optimistic entry retire?          | **On the snapshot, never on the HTTP response** — by identity, or by the version the route reports in `x-wheel-updated-at` (§3, §6)    |
-| 23  | How does the page know its token is valid?     | **`GET /wheels/{shareId}/editor`** — a read-only check. Only `401`/`403` demote; a failure to answer keeps the editor view (§6)        |
-| 24  | What are the landing page's other CTAs?        | **There are none** — every call to action makes a wheel. No demo wheel, no wheel lookup: a wheel is reachable only by its link (§2)    |
+| #   | Question                                       | Decision                                                                                                                                   |
+| --- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Is the edit URL transferable?                  | **Yes** — token is a bearer capability, multiple concurrent editors supported (§2, §6)                                                     |
+| 2   | Edits during spin animation?                   | **View frozen client-side**, data not locked — no server-side lock in either phase (§6)                                                    |
+| 3   | Can participants see the suggestion queue?     | **Yes** — public queue, reject is a hard delete (§4)                                                                                       |
+| 4   | TTL length?                                    | **30 days, sliding** — refreshed on any activity (§8)                                                                                      |
+| 5   | Duplicate-wheel flow?                          | **Yes** — open to anyone with the share URL (§8)                                                                                           |
+| 6   | Does option order matter?                      | **No** — no reorder op; all mutations commute (§6)                                                                                         |
+| 7   | Framework?                                     | **Next.js App Router** — server-rendered OG metadata is the deciding factor (§3)                                                           |
+| 8   | Hosting?                                       | **Vercel** — simplicity; cross-cloud write hop is negligible at this volume (§3)                                                           |
+| 9   | Rate limiting in v1?                           | **Deferred** — App Check + per-wheel caps + budget alert instead of standing up Redis (§7)                                                 |
+| 10  | Can option labels be edited in place?          | **No** — remove and re-add; no `PATCH` option endpoint. Keeps every mutation commutative (§6)                                              |
+| 11  | How do rejected suggestions appear?            | **They don't** — reject is a hard delete, no tombstone, no "Declined" chip (§4)                                                            |
+| 12  | Suggestion attribution?                        | **None** — no submitter name in v1; identity arrives deliberately with chat in phase 2 (§4, §9)                                            |
+| 13  | Do participants see the editor's spin?         | **No in v1** — but a participant can spin for themselves; every v1 spin is local to the browser that ran it, and the copy must say so (§6) |
+| 14  | Mobile support?                                | **Responsive throughout, participant view mobile-first** — the share link lives in group chats (§1)                                        |
+| 15  | Is the "Picked" chip persisted?                | **No — local-only**, client state in the spinning browser, gone on refresh. No schema, no endpoint (§4)                                    |
+| 16  | Where do the editor affordances live?          | **Title inline in the header; `suggestionsOpen` in the Suggestions panel header; duplicate in a header overflow menu** (§7)                |
+| 17  | Does duplicate rename the fork?                | **No — title copied verbatim.** Renaming is one field edit away if the forker wants it (§8)                                                |
+| 18  | Firestore mode and location?                   | **Native mode, `us-east1`** — pairs with Vercel's `iad1`; both choices are permanent (§3)                                                  |
+| 19  | Local development environment?                 | **Firebase Emulator Suite** — no cloud project, no service account on dev machines, and it makes §5 rules testable (§3)                    |
+| 20  | What happens to orphaned subcollections?       | **Each suggestion carries its own `expiresAt`**, set at submit and never slid. Never outlives its wheel; may die under a live one (§8)     |
+| 21  | How does an expired-but-unreaped wheel behave? | **As a live wheel** — no route checks `expiresAt`, and any write slides it back out of danger (§8)                                         |
+| 22  | When does an optimistic entry retire?          | **On the snapshot, never on the HTTP response** — by identity, or by the version the route reports in `x-wheel-updated-at` (§3, §6)        |
+| 23  | How does the page know its token is valid?     | **`GET /wheels/{shareId}/editor`** — a read-only check. Only `401`/`403` demote; a failure to answer keeps the editor view (§6)            |
+| 24  | What are the landing page's other CTAs?        | **There are none** — every call to action makes a wheel. No demo wheel, no wheel lookup: a wheel is reachable only by its link (§2)        |
 
 Decision 24 retires the prototype's two remaining landing buttons. "See a live
 one" wanted a public demo wheel, which is not a link but a small feature: it
