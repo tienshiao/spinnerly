@@ -42,32 +42,43 @@ export const size = OG_SIZE
 export const contentType = 'image/png'
 
 /**
- * How long a card that came out RIGHT may be held.
+ * What a card that came out RIGHT is served with — and it is deliberately the
+ * value Next was already sending, restated rather than chosen.
  *
- * Modest on purpose. A crawler caches the unfurl against the share URL and
- * never comes back, so a longer TTL here buys nothing where it matters — it
- * only decides how often a re-paste, a preview expander or a second platform
- * costs a Firestore read. Ten minutes keeps that cheap while letting a wheel
- * that has just been filled in unfurl as itself to the next person who pastes
- * it.
+ * Constructing the response by hand (see below) means nothing writes a
+ * `Cache-Control` for us any more, so leaving this out would silently drop the
+ * route to no header at all and let every intermediary apply its own default.
+ * Matching `next-metadata-route-loader`'s `CACHE_HEADERS.REVALIDATE` keeps the
+ * caching behaviour of this route exactly what it was before the render
+ * changed.
+ *
+ * **There is a longer story here and it is a correction.** The compiled
+ * @vercel/og bundle sets `public, immutable, no-transform, max-age=31536000` in
+ * production, and this file briefly carried a ten-minute TTL justified by
+ * "otherwise a failed read is pinned for a year". That justification was wrong:
+ * Next's metadata route layer replaces @vercel/og's header, so the immutable
+ * value never reaches a client. Measured on a production build of the code as
+ * it stood before that change — `public, max-age=0, must-revalidate`, not the
+ * year. What made the mistake stick was a coincidence: the dev server answers
+ * `no-cache, no-store`, which is @vercel/og's development string AND Next's own
+ * `CACHE_HEADERS.NO_CACHE`, so seeing it looked like proof that @vercel/og's
+ * header was the one getting through. It was not evidence of anything.
+ *
+ * Do not "restore" a longer TTL here without measuring a real deployment
+ * first. A cached card cannot be corrected (design doc section 3), so the bias
+ * on this route runs towards revalidating, not towards saving a read.
  */
-const CARD_CACHE = 'public, max-age=600, stale-while-revalidate=3600'
+const CARD_CACHE = 'public, max-age=0, must-revalidate'
 
 /**
- * And how long a card built from a FAILURE may be held: not at all.
+ * A card built from a FAILED READ is not stored at all.
  *
- * This is the whole point of choosing the header rather than accepting the one
- * `ImageResponse` writes, which in production is
- * `public, immutable, no-transform, max-age=31536000`. A single Firestore
- * timeout, or a deployment whose credentials are not configured yet, renders
- * the generic card — and `immutable` then pins that card at the CDN and every
- * intermediary for a year. The route is never asked again, so the "it will be
- * right next time" this file is built around never arrives, on a product whose
- * design doc opens by saying a cached card cannot be corrected.
- *
- * `no-store` rather than a short `max-age`, because there is nothing here worth
- * keeping: the card is a placeholder for a wheel we failed to read, and the
- * cheapest correct thing is to read again.
+ * This is the one place the header genuinely departs from what Next would send,
+ * and it is a small claim rather than the large one above: `must-revalidate`
+ * already prevents a stale generic card being served without a check, so what
+ * `no-store` adds is only that nothing keeps a copy to revalidate. The card is
+ * a placeholder for a wheel we could not read; there is nothing in it worth
+ * holding, and re-reading is the cheapest correct thing.
  */
 const FAILED_CACHE = 'no-store'
 
@@ -80,20 +91,22 @@ export default async function Image({
   const read = await preview(shareId)
 
   /**
-   * **Rendered to bytes here rather than handed back as an `ImageResponse`, and
-   * that is what makes everything above possible.**
+   * **Rendered to bytes here rather than handed back as an `ImageResponse`.**
    *
+   * This, and not the header above, is what this route was rewritten for.
    * `new ImageResponse(...)` returns at once: satori and resvg run inside the
    * body's `ReadableStream`, which is to say AFTER the 200 and the headers have
-   * gone out. A throw in there cannot fall back to anything and cannot change a
-   * header — it aborts the stream, and what a crawler receives is a truncated
-   * PNG. Awaiting the bytes moves that work in front of the response, so a
-   * failure is still a decision we get to make.
+   * gone out. A throw in there cannot fall back to anything — it aborts the
+   * stream, and what a crawler receives is a truncated PNG, cached as the
+   * wheel's picture. Awaiting the bytes moves that work in front of the
+   * response, so a failure is still a decision we get to make.
    *
    * It is not a theoretical failure. @vercel/og resolves an emoji by fetching
    * it from cdn.jsdelivr.net at render time, and unlike the CJK font branch
    * directly beside it that fetch is not wrapped — so any wheel whose title
    * carries an emoji depends on a third-party CDN answering, mid-render.
+   * Verified by giving a wheel an emoji title and watching the glyph appear on
+   * the card, which is only possible if that fetch happened.
    *
    * The cost is that the PNG is buffered rather than streamed. At 1200x630 that
    * is tens of kilobytes and no crawler is rendering it progressively.
@@ -141,15 +154,13 @@ function png(body: ArrayBuffer, cacheControl: string): Response {
  * a share ID that never existed. `ok: false` is a read that failed: a Firestore
  * call that timed out, credentials missing on a preview deployment.
  *
- * **The two draw the same card and must not share a cache policy.** Design doc
- * section 3 and `wheelMetadata` both argue that a viewer must not be told which
- * of the two happened — "this wheel has expired" pinned into a crawler's cache
- * by one failed read would describe a live wheel as gone. That argument is
- * about the WORDS. Caching is the opposite: an absent wheel is a settled fact
- * worth keeping for a while, and a failed read is the one answer that must
- * never be kept at all. Collapsing them to `null`, as this did, made the
- * failure indistinguishable at exactly the point where the difference decides
- * whether the mistake is permanent.
+ * **The two draw the same card and are not owed the same cache policy.** Design
+ * doc section 3 and `wheelMetadata` both argue that a viewer must not be told
+ * which of the two happened — "this wheel has expired" pinned into a crawler's
+ * cache by one failed read would describe a live wheel as gone. That argument
+ * is about the WORDS, and it still stands. Caching is a separate question: an
+ * absent wheel is a settled fact, and a failed read is not a fact at all.
+ * Keeping them apart costs one type and makes `no-store` expressible.
  */
 type Read =
   | { ok: true; preview: WheelPreview | null }
