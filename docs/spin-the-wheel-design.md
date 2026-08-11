@@ -842,8 +842,11 @@ share URL lets someone loop writes against our Firestore quota.
 
 - **App Check — enable before launch.** Trivial config on day one, a migration
   later. This is the highest-leverage item in this section.
-- ~~Rate limit suggestions per IP and per `shareId`.~~ **Deferred.** Requires an
-  external state store (Redis) that we're not standing up for v1.
+- ~~Rate limit suggestions per IP and per `shareId`.~~ **Deferred — and the
+  reason has since expired.** The blocker was an external state store (Redis) we
+  weren't standing up for v1. Vercel WAF rate limiting turns out to be available
+  on every plan, Hobby included (§11 Q3), so the rule is dashboard configuration
+  with no Redis and no code. Nothing here leans on it yet: no rule is configured.
 - Cap: options per wheel (~50), suggestion length (60 chars), pending
   suggestions per wheel (~200).
 - `suggestionsOpen: false` as an owner kill switch when a wheel gets brigaded.
@@ -1039,32 +1042,32 @@ scoping separately rather than bolting on.
 
 ## 10. Decisions
 
-| #   | Question                                       | Decision                                                                                                                                   |
-| --- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | Is the edit URL transferable?                  | **Yes** — token is a bearer capability, multiple concurrent editors supported (§2, §6)                                                     |
-| 2   | Edits during spin animation?                   | **View frozen client-side**, data not locked — no server-side lock in either phase (§6)                                                    |
-| 3   | Can participants see the suggestion queue?     | **Yes** — public queue, reject is a hard delete (§4)                                                                                       |
-| 4   | TTL length?                                    | **30 days, sliding** — refreshed on any activity (§8)                                                                                      |
-| 5   | Duplicate-wheel flow?                          | **Yes** — open to anyone with the share URL (§8)                                                                                           |
-| 6   | Does option order matter?                      | **No** — no reorder op; all mutations commute (§6)                                                                                         |
-| 7   | Framework?                                     | **Next.js App Router** — server-rendered OG metadata is the deciding factor (§3)                                                           |
-| 8   | Hosting?                                       | **Vercel** — simplicity; cross-cloud write hop is negligible at this volume (§3)                                                           |
-| 9   | Rate limiting in v1?                           | **Deferred** — App Check + per-wheel caps + budget alert instead of standing up Redis (§7)                                                 |
-| 10  | Can option labels be edited in place?          | **No** — remove and re-add; no `PATCH` option endpoint. Keeps every mutation commutative (§6)                                              |
-| 11  | How do rejected suggestions appear?            | **They don't** — reject is a hard delete, no tombstone, no "Declined" chip (§4)                                                            |
-| 12  | Suggestion attribution?                        | **None** — no submitter name in v1; identity arrives deliberately with chat in phase 2 (§4, §9)                                            |
-| 13  | Do participants see the editor's spin?         | **No in v1** — but a participant can spin for themselves; every v1 spin is local to the browser that ran it, and the copy must say so (§6) |
-| 14  | Mobile support?                                | **Responsive throughout, participant view mobile-first** — the share link lives in group chats (§1)                                        |
-| 15  | Is the "Picked" chip persisted?                | **No — local-only**, client state in the spinning browser, gone on refresh. No schema, no endpoint (§4)                                    |
-| 16  | Where do the editor affordances live?          | **Title inline in the header; `suggestionsOpen` in the Suggestions panel header; duplicate in a header overflow menu** (§7)                |
-| 17  | Does duplicate rename the fork?                | **No — title copied verbatim.** Renaming is one field edit away if the forker wants it (§8)                                                |
-| 18  | Firestore mode and location?                   | **Native mode, `us-east1`** — pairs with Vercel's `iad1`; both choices are permanent (§3)                                                  |
-| 19  | Local development environment?                 | **Firebase Emulator Suite** — no cloud project, no service account on dev machines, and it makes §5 rules testable (§3)                    |
-| 20  | What happens to orphaned subcollections?       | **Each suggestion carries its own `expiresAt`**, set at submit and never slid. Never outlives its wheel; may die under a live one (§8)     |
-| 21  | How does an expired-but-unreaped wheel behave? | **As a live wheel** — no route checks `expiresAt`, and any write slides it back out of danger (§8)                                         |
-| 22  | When does an optimistic entry retire?          | **On the snapshot, never on the HTTP response** — by identity, or by the version the route reports in `x-wheel-updated-at` (§3, §6)        |
-| 23  | How does the page know its token is valid?     | **`GET /wheels/{shareId}/editor`** — a read-only check. Only `401`/`403` demote; a failure to answer keeps the editor view (§6)            |
-| 24  | What are the landing page's other CTAs?        | **There are none** — every call to action makes a wheel. No demo wheel, no wheel lookup: a wheel is reachable only by its link (§2)        |
+| #   | Question                                       | Decision                                                                                                                                                                     |
+| --- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Is the edit URL transferable?                  | **Yes** — token is a bearer capability, multiple concurrent editors supported (§2, §6)                                                                                       |
+| 2   | Edits during spin animation?                   | **View frozen client-side**, data not locked — no server-side lock in either phase (§6)                                                                                      |
+| 3   | Can participants see the suggestion queue?     | **Yes** — public queue, reject is a hard delete (§4)                                                                                                                         |
+| 4   | TTL length?                                    | **30 days, sliding** — refreshed on any activity (§8)                                                                                                                        |
+| 5   | Duplicate-wheel flow?                          | **Yes** — open to anyone with the share URL (§8)                                                                                                                             |
+| 6   | Does option order matter?                      | **No** — no reorder op; all mutations commute (§6)                                                                                                                           |
+| 7   | Framework?                                     | **Next.js App Router** — server-rendered OG metadata is the deciding factor (§3)                                                                                             |
+| 8   | Hosting?                                       | **Vercel** — simplicity; cross-cloud write hop is negligible at this volume (§3)                                                                                             |
+| 9   | Rate limiting in v1?                           | **Deferred, and the reason has expired** — App Check + per-wheel caps + budget alert carry it today; Vercel WAF makes the rule free to add, unconfigured so far (§7, §11 Q3) |
+| 10  | Can option labels be edited in place?          | **No** — remove and re-add; no `PATCH` option endpoint. Keeps every mutation commutative (§6)                                                                                |
+| 11  | How do rejected suggestions appear?            | **They don't** — reject is a hard delete, no tombstone, no "Declined" chip (§4)                                                                                              |
+| 12  | Suggestion attribution?                        | **None** — no submitter name in v1; identity arrives deliberately with chat in phase 2 (§4, §9)                                                                              |
+| 13  | Do participants see the editor's spin?         | **No in v1** — but a participant can spin for themselves; every v1 spin is local to the browser that ran it, and the copy must say so (§6)                                   |
+| 14  | Mobile support?                                | **Responsive throughout, participant view mobile-first** — the share link lives in group chats (§1)                                                                          |
+| 15  | Is the "Picked" chip persisted?                | **No — local-only**, client state in the spinning browser, gone on refresh. No schema, no endpoint (§4)                                                                      |
+| 16  | Where do the editor affordances live?          | **Title inline in the header; `suggestionsOpen` in the Suggestions panel header; duplicate in a header overflow menu** (§7)                                                  |
+| 17  | Does duplicate rename the fork?                | **No — title copied verbatim.** Renaming is one field edit away if the forker wants it (§8)                                                                                  |
+| 18  | Firestore mode and location?                   | **Native mode, `us-east1`** — pairs with Vercel's `iad1`; both choices are permanent (§3)                                                                                    |
+| 19  | Local development environment?                 | **Firebase Emulator Suite** — no cloud project, no service account on dev machines, and it makes §5 rules testable (§3)                                                      |
+| 20  | What happens to orphaned subcollections?       | **Each suggestion carries its own `expiresAt`**, set at submit and never slid. Never outlives its wheel; may die under a live one (§8)                                       |
+| 21  | How does an expired-but-unreaped wheel behave? | **As a live wheel** — no route checks `expiresAt`, and any write slides it back out of danger (§8)                                                                           |
+| 22  | When does an optimistic entry retire?          | **On the snapshot, never on the HTTP response** — by identity, or by the version the route reports in `x-wheel-updated-at` (§3, §6)                                          |
+| 23  | How does the page know its token is valid?     | **`GET /wheels/{shareId}/editor`** — a read-only check. Only `401`/`403` demote; a failure to answer keeps the editor view (§6)                                              |
+| 24  | What are the landing page's other CTAs?        | **There are none** — every call to action makes a wheel. No demo wheel, no wheel lookup: a wheel is reachable only by its link (§2)                                          |
 
 Decision 24 retires the prototype's two remaining landing buttons. "See a live
 one" wanted a public demo wheel, which is not a link but a small feature: it
@@ -1087,5 +1090,24 @@ wins; the prototype is a visual reference, not a specification.
 2. Do we notify participants that a wheel is near expiry, given there's no
    channel to reach them and no accounts? Probably "no, and the duplicate flow
    is the mitigation" — but worth stating explicitly.
-3. Does Vercel Firewall rate limiting cover §7 on our plan? If so it closes the
-   deferred gap with no Redis and no code.
+3. ~~Does Vercel Firewall rate limiting cover §7 on our plan?~~ **Answered: yes,
+   on every plan, Hobby included** (TASK-25). It is a WAF feature rather than a
+   plan upgrade, so the Redis dependency that deferred rate limiting in §7 is
+   simply gone — a rule is dashboard configuration with no application code.
+
+   What Hobby actually gives: **one** rate-limit rule per project, keyed on IP or
+   JA4 digest, fixed-window only, a window between 10s and 10 minutes, and
+   1,000,000 allowed requests included. One rule suits the shape of abuse §7
+   describes, since every write goes through `/api` — but it is the only one, so
+   spending it on something narrower than the write routes would leave the
+   billing surface uncovered.
+
+   Two properties to carry into whatever rule gets written. Counters are tracked
+   **per region**, so a source spread across regions can exceed the configured
+   limit by a multiple of however many it reaches: the number bounds a region,
+   not the world. And rate-limited traffic incurs neither CDN Requests nor Fast
+   Data Transfer, which makes the rule a cost control in its own right and not
+   only an abuse one.
+
+   **No rule is configured.** The finding answers the question; writing the rule
+   is separate work.
